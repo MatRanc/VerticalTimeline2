@@ -15,9 +15,42 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
 <html>
     <head>
         <style>
+            /* All themed colors are defined as custom properties so the palette
+               can switch between light and dark. The defaults below are the
+               light theme; the prefers-color-scheme media query overrides them
+               for dark mode, which follows the OS / Fusion UI theme. */
+            :root {
+                color-scheme: light dark;
+                --bg: #ffffff;
+                --fg: #1a1a1a;
+                --hover-bg: #d9d9d9;
+                --selected-bg: #cde6ff;
+                --selected-hover-bg: #b9dbff;
+                --group-border: #000000;
+                --rolled-back-border: silver;
+                --name-hover-outline: silver;
+                --name-focus-bg: #ffffff;
+                --status-fg: #a05000;
+            }
+            @media (prefers-color-scheme: dark) {
+                :root {
+                    --bg: #2b2b2b;
+                    --fg: #dcdcdc;
+                    --hover-bg: #3d3d3d;
+                    --selected-bg: #2d4f6b;
+                    --selected-hover-bg: #3a648a;
+                    --group-border: #5a5a5a;
+                    --rolled-back-border: #6a6a6a;
+                    --name-hover-outline: #777777;
+                    --name-focus-bg: #1e1e1e;
+                    --status-fg: #e0a35c;
+                }
+            }
             body {
                 font-family: Arial, Helvetica, sans-serif;
                 font-size: 12px;
+                background-color: var(--bg);
+                color: var(--fg);
             }
             #content {
                 display: flex;
@@ -36,23 +69,29 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 padding-right: 5px;
             }
             .feature:hover {
-                background-color: #d9d9d9;
+                background-color: var(--hover-bg);
+            }
+            .feature.selected {
+                background-color: var(--selected-bg);
+            }
+            .feature.selected:hover {
+                background-color: var(--selected-hover-bg);
             }
             .first-rolled-back {
-                border-top: 3px solid silver;
+                border-top: 3px solid var(--rolled-back-border);
             }
             .feature-group-header {
-                border: 1px solid black;
+                border: 1px solid var(--group-border);
                 border-bottom: none;
                 /* Border compensation */
                 padding-left: 4px;
                 padding-right: 4px;
             }
             .feature-group-header.collapsed {
-                border-bottom: 1px solid black;
+                border-bottom: 1px solid var(--group-border);
             }
             .feature-group {
-                border: 1px solid black;
+                border: 1px solid var(--group-border);
                 border-top: none;
             }
             .feature-group.collapsed {
@@ -92,16 +131,25 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 margin-left: 5px;
             }
             .name:hover {
-                outline: 1px solid silver;
+                outline: 1px solid var(--name-hover-outline);
             }
             .name:focus {
-                background-color: white;
+                background-color: var(--name-focus-bg);
             }
             .suppressed {
                 opacity: 0.5;
             }
             ul {
                 padding-left: 0px;
+            }
+            #status {
+                color: var(--status-fg);
+                font-style: italic;
+                min-height: 1.2em;
+                margin-bottom: 4px;
+            }
+            #status:empty {
+                display: none;
             }
         </style>
     </head>
@@ -116,28 +164,32 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 </div>
             </div>
             <div>
-                 by Thomas Axelsson 2020
+                <div id="status"></div>
             </div>
         </div>
     </body>
     <script>
-    // Can't access the colors from Fusion, so making up our own
-    const COMPONENT_COLORS = [
-        '#e79f53',
-        '#4a51d7',
-        '#6bfcdd',
-        '#54d8f7',
-    ];
-    var colorMap = {};
-    var nextColor = 0;
+    // Fusion does not expose component colors to the palette, so derive a stable
+    // color from each component's name. Deriving the color (rather than handing
+    // them out in encounter order from a fixed list) means a component keeps the
+    // same color across timeline refreshes and across documents.
+    function colorForComponent(name) {
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+            hash = (hash * 31 + name.charCodeAt(i)) | 0;
+        }
+        return `hsl(${Math.abs(hash) % 360}, 60%, 62%)`;
+    }
 
     var collapsedGroups = new Set();
+
+    var statusTimer = null;
 
     var cancelingEdit = false;
 
     window.fusionJavaScriptHandler = {handle: function(action, jsonData){
         console.log("Got command:", action);
-        data = JSON.parse(jsonData);
+        let data = JSON.parse(jsonData);
         return handle(action, data);
     }};
 
@@ -152,6 +204,12 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     timeline.innerHTML = '';
                     appendItems(timeline, data['features'], data['max-parents'])
 
+                    break;
+                case 'showMessage':
+                    showStatus(data['message']);
+                    break;
+                case 'highlightFeatures':
+                    highlightFeatures(data['ids']);
                     break;
                 case 'debugger':
                     debugger;
@@ -270,17 +328,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             let parentBar = document.createElement('span');
             parentBar.classList.add('parent-bar')
             parentBar.title = parent;
-            color = colorMap[parent];
-            if (!color) {
-                if (nextColor >= COMPONENT_COLORS.length) {
-                    color = 'silver';
-                } else {
-                    color = COMPONENT_COLORS[nextColor];
-                    colorMap[parent] = color;
-                    nextColor++;
-                }
-            }
-            parentBar.style.backgroundColor = color;
+            parentBar.style.backgroundColor = colorForComponent(parent);
             parentBars.appendChild(parentBar);
         }
     }
@@ -326,7 +374,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         sel.addRange(range);
     }
 
-    function onFeatureClick(e) {
+    async function onFeatureClick(e) {
         let item = e.target;
         console.log("feature click")
         // Disabling event capturing does not seem to work,
@@ -339,33 +387,36 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             return;
         }
 
-        let ret = query('selectFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
+        let ret = await query('selectFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
         processCommands(ret);
     }
 
-    function onFeatureDoubleClick(e) {
+    async function onFeatureDoubleClick(e) {
         let item = e.target.closest('.feature');
 
-        let ret = query('editFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
+        let ret = await query('editFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
         processCommands(ret);
     }
 
-    function onFeatureContextMenu(e) {
+    async function onFeatureContextMenu(e) {
         if (e.target.classList.contains('name')) {
             // Don't block normal right click in text edit
             return true;
         }
 
-        let item = e.target.closest('.feature');
-        let ret = query('rollToFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
-        processCommands(ret);
-        
-        // Block context menu
+        // Block the context menu synchronously, before awaiting Fusion. With the
+        // new (Qt) browser query() is async, so preventDefault() must run now -
+        // after an await the browser would already have shown the menu.
         e.preventDefault();
+
+        let item = e.target.closest('.feature');
+        let ret = await query('rollToFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
+        processCommands(ret);
+
         return false;
     }
 
-    function storeFeatureName(item) {
+    async function storeFeatureName(item) {
         let nameElement = item.querySelector('.name');
         let value = nameElement.innerText;
         let hasEditName = item.hasAttribute('data-edit-name');
@@ -375,9 +426,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         let ret = [];
         if (value != item.getAttribute(editableName)) {
             // Value changed
-            ret = query('setFeatureName', { 'id': parseInt(item.getAttribute('data-id')),
+            ret = await query('setFeatureName', { 'id': parseInt(item.getAttribute('data-id')),
                                             'value': value });
-            visibleName = ret[0];
+            let visibleName = ret[0];
             if (visibleName) {
                 // Store updated name
                 item.setAttribute(editableName, value);
@@ -398,15 +449,39 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         }
     }
 
-    function send(action, data = {}) {
-        let commands = query(action, data);
+    // Show a transient, non-intrusive status message (auto-clears).
+    function showStatus(text) {
+        let status = document.getElementById('status');
+        status.innerText = text || '';
+        if (statusTimer) {
+            clearTimeout(statusTimer);
+            statusTimer = null;
+        }
+        if (text) {
+            statusTimer = setTimeout(() => { status.innerText = ''; }, 5000);
+        }
+    }
+
+    // Highlight the timeline rows whose ids are given (selection in Fusion's GUI).
+    function highlightFeatures(ids) {
+        let idSet = new Set((ids || []).map(String));
+        for (let item of document.querySelectorAll('.feature')) {
+            item.classList.toggle('selected', idSet.has(item.getAttribute('data-id')));
+        }
+    }
+
+    async function send(action, data = {}) {
+        let commands = await query(action, data);
         processCommands(commands);
     }
 
-    function query(action, data = {}) {
-        let ret = adsk.fusionSendData(action, JSON.stringify(data));
+    // With the new (Qt) browser adsk.fusionSendData returns a Promise that
+    // resolves to the add-in's returnData string. (The legacy CEF browser
+    // returned the string synchronously.)
+    async function query(action, data = {}) {
+        let ret = await adsk.fusionSendData(action, JSON.stringify(data));
         console.log("RET:", ret);
-        return JSON.parse(ret);        
+        return JSON.parse(ret);
     }
 
     function waitForSdk() {

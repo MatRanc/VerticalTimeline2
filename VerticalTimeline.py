@@ -11,8 +11,8 @@
 
 # Put add-in folder in %appdata%\Autodesk\Autodesk Fusion 360\API\AddIns
 
-# Need to use Visual Studio Code Python extension version 2019.9.34911
-# to be able to debug with Fusion.. (2020-07-23)
+# Tested against Fusion's bundled Python 3.12 runtime and the new (Qt) palette
+# web browser. The legacy CEF browser is deprecated by Autodesk.
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
 
@@ -52,6 +52,10 @@ html_ready = False
 
 timeline_item_count = 0
 timeline_marker_position = -1
+
+# Highlight the timeline row matching the feature selected in Fusion's GUI.
+# Best-effort: matching is based on entity identity. Set to False to disable.
+HIGHLIGHT_GUI_SELECTION = True
 
 settings = thomasa88lib.settings.SettingsManager(
     { 'enabled': False }
@@ -160,11 +164,17 @@ FEATURE_RESOURCE_MAP = {
 
     # Planes
     'ConstructionPlane': lambda i: PLANE_RESOURCE_MAP.get(thomasa88lib.utils.short_class(i.entity.definition)),
-    
-    # Not allowed to access entity for these (API mismatch?)
+
+    # Move/Align. Historically Fusion did not allow accessing the entity of these
+    # features (see bug link below), so they fell back to the "info access
+    # prohibited" placeholder. Newer Fusion versions expose the entity; map them
+    # so they get a proper icon and become editable. If the entity is still
+    # inaccessible, get_features_from_node() handles the RuntimeError gracefully
+    # and these entries are simply never reached.
+    'MoveFeature': ('Fusion/UI/FusionUI/Resources/Modeling/Move', 'FusionDcMoveCopyEditCommand'),
+    'AlignFeature': ('Fusion/UI/FusionUI/Resources/Modeling/Align', 'FusionDcAlignEditCommand'),
+
     # Bug: https://forums.autodesk.com/t5/fusion-360-api-and-scripts/api-bug-cannot-access-entity-of-quot-move-quot-feature/m-p/9651921
-    # Move: FusionDcMoveCopyEditCommand
-    # Align: FusionDcAlignEditCommand
     # '2 : InternalValidationError : res': 'Fusion/UI/FusionSheetMetalUI/Resources/Flange',
     # '2 : InternalValidationError : res': 'Fusion/UI/FusionSheetMetalUI/Resources/Bend',
     # '2 : InternalValidationError : res': 'Fusion/UI/FusionSheetMetalUI/Resources/ConvertToSheetMetal',
@@ -172,16 +182,21 @@ FEATURE_RESOURCE_MAP = {
     # insert derive feature: 'Fusion/UI/FusionUI/Resources/Derive/CloneWM',
 }
 
+UNKNOWN_FEATURE_IMAGE = 'Fusion/UI/FusionUI/Resources/finish/finishX'
+
 def get_feature_image(obj):
     match = get_feature_res(obj)
 
-    if not match or not match[0]:
-        # Image not mapped
-        image = 'Fusion/UI/FusionUI/Resources/finish/finishX'
-    else:
-        image = match[0]
-    
-    return get_image_path(image)
+    image = None
+    if match and match[0]:
+        image = get_image_path(match[0])
+
+    if not image:
+        # Image not mapped, or the mapped resource does not exist in this
+        # Fusion version. Fall back to a generic placeholder.
+        image = get_image_path(UNKNOWN_FEATURE_IMAGE)
+
+    return image
 
 def get_feature_edit_command_id(obj):
     match = get_feature_res(obj)
@@ -199,13 +214,23 @@ def get_feature_res(obj):
         match = match(obj)
     return match
 
+# Resolved icon paths are cached: the Fusion deploy folder and the bundled
+# resource files do not change during a session, so there is no need to hit the
+# filesystem (os.path.exists) once per feature on every timeline refresh.
+_image_path_cache = {}
 def get_image_path(subpath):
+    if subpath in _image_path_cache:
+        return _image_path_cache[subpath]
+
     path = f'{thomasa88lib.utils.get_fusion_deploy_folder()}/{subpath}/16x16.png'
     if os.path.exists(path):
-        return path
+        result = path
     else:
         print(f'File does not exist: {path}')
-        return None
+        result = None
+
+    _image_path_cache[subpath] = result
+    return result
 
 def find_commands(substring):
     return [c.id for c in ui.commandDefinitions if substring in c.id.lower()]
@@ -266,6 +291,14 @@ def invalidate(send=True, clear=False):
         return html_command
     else:
         palette.sendInfoToHTML('setTimeline', json.dumps(data))
+
+def report_message(text):
+    '''Report a non-fatal message to the user without a blocking message box.
+
+    The text is logged to the Text Commands console and returned as an HTML
+    command so the palette can show it as a transient, non-intrusive status.'''
+    print(f'Vertical Timeline: {text}')
+    return {'action': 'showMessage', 'data': {'message': text}}
 
 class TimelineObjectNode:
     def __init__(self, obj, id):
@@ -449,6 +482,19 @@ def get_view_drop_down():
     view_drop_down = file_drop_down.controls.itemById('ViewWidgetCommand')
     return view_drop_down
 
+def get_active_workspace_id():
+    '''Return the active workspace id, or None if there is no active environment.
+
+    Reading ui.activeWorkspace can raise (RuntimeError:
+    InternalValidationError : pActiveEnvironment) early at startup or on the
+    Home screen, before any design environment is active. documentActivated can
+    fire in that state, so callers must treat "no workspace" as a normal case
+    rather than crashing.'''
+    try:
+        return ui.activeWorkspace.id
+    except RuntimeError:
+        return None
+
 def check_timeline():
     global timeline_item_count
     global timeline_marker_position
@@ -518,6 +564,11 @@ def run(context):
                     adsk.core.WorkspaceEventHandler,
                     workspace_activated_handler)
 
+        # Highlight in the palette whatever feature the user selects in the GUI.
+        events_manager.add_handler(ui.activeSelectionChanged,
+                    adsk.core.ActiveSelectionEventHandler,
+                    active_selection_changed_handler)
+
         print("Running")
 
         # Show palette when user starts the add-in manually
@@ -548,7 +599,7 @@ def toggle_palette_command_execute_handler(args):
     enable = not get_enabled()
     set_enabled(enable)
     if enable:
-        if ui.activeWorkspace.id == 'FusionSolidEnvironment':
+        if get_active_workspace_id() == 'FusionSolidEnvironment':
             show_palette()
         else:
             ui.messageBox('Vertical Timeline cannot be shown in this workspace. ' +
@@ -563,9 +614,14 @@ def show_palette():
     if not palette:
         html_ready = False
 
+        # useNewWebBrowser=True selects Fusion's new Qt-based palette browser.
+        # Autodesk deprecated the legacy CEF browser and recommends opting in so
+        # the add-in keeps working once CEF support is removed. With the new
+        # browser adsk.fusionSendData() returns a Promise, which palette.html
+        # handles via async/await.
         palette = ui.palettes.add('thomasa88_verticalTimelinePalette', f'Vertical Timeline v{manifest["version"]}',
                                     'palette.html',
-                                    True, True, True, 250, 500, False)
+                                    True, True, True, 250, 500, True)
         palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateLeft
 
         events_manager.add_handler(palette.incomingFromHTML,
@@ -640,9 +696,13 @@ def palette_incoming_from_html_handler(args):
         design: adsk.fusion.Design = app.activeProduct
         entity = obj.entity
 
-        # Making this in a transactory way so the current selection is not removed
-        # if the entity is not selectable.
+        # Build the new selection in a transactory way, so the current selection
+        # is not cleared if the entity turns out to be unselectable.
         newSelection = adsk.core.ObjectCollection.create()
+
+        # Whether the selected entity can be edited. Selecting only the produced
+        # bodies (the fallback below) allows highlighting but not editing.
+        editable = True
 
         if isinstance(entity, adsk.fusion.Occurrence):
             associated_component = entity.sourceComponent
@@ -652,37 +712,49 @@ def palette_incoming_from_html_handler(args):
             associated_component = entity.parentComponent
 
         if associated_component == design.rootComponent:
-            # There are no occurrences of root. Just a single instance: root. Can select the entity directly.
+            # There are no occurrences of root - just the single root instance.
+            # The entity can be selected directly.
             newSelection.add(entity)
         else:
-            #Using _all_OccurrencesByComponent to get nested occurrences.
+            # The entity lives inside a component that may be instanced several
+            # times. Select it in every occurrence context (uses
+            # allOccurrencesByComponent to also reach nested occurrences).
             in_occurrences = design.rootComponent.allOccurrencesByComponent(associated_component)
             if hasattr(entity, 'createForAssemblyContext'):
+                # Features (Box, Cylinder, Extrude, ...), sketches, planes and
+                # occurrences all support assembly-context proxies. Selecting the
+                # feature proxy itself - rather than just the bodies it produced -
+                # is what lets the edit command operate on the feature.
                 for occurrence in in_occurrences:
-                    proxy = entity.createForAssemblyContext(occurrence)
-                    newSelection.add(proxy)
+                    newSelection.add(entity.createForAssemblyContext(occurrence))
             elif hasattr(entity, 'bodies'):
-                # Workaround for Feature objects
-                ### TODO: Correctly select Feature objects. E.g. BoxFeature, CylinderFeature, ...
-                ###       so that editing them works.
+                # Fallback for entities that do not expose an assembly-context
+                # proxy: select the produced bodies. The feature itself cannot be
+                # edited this way.
+                editable = False
                 for body in entity.bodies:
                     for occurrence in in_occurrences:
-                        proxy = body.createForAssemblyContext(occurrence)
-                        newSelection.add(proxy)
+                        newSelection.add(body.createForAssemblyContext(occurrence))
 
         try:
             ui.activeSelections.all = newSelection
         except Exception as e:
-            ui.messageBox(f'Failed to select {thomasa88lib.utils.short_class(entity)}: {e}')
+            html_commands.append(report_message(
+                f'Failed to select {thomasa88lib.utils.short_class(entity)}: {e}'))
             ret = False
-        
+
         if ret and action == 'editFeature':
             command_id = get_feature_edit_command_id(obj)
-            if command_id:
-                #print("T", ui.terminateActiveCommand())
+            if not editable:
+                html_commands.append(report_message(
+                    f'Editing {thomasa88lib.utils.short_class(entity)} inside a '
+                    'component is not supported.'))
+                ret = False
+            elif command_id:
                 ui.commandDefinitions.itemById(command_id).execute()
             else:
-                ui.messageBox(f'Editing {thomasa88lib.utils.short_class(entity)} feature is not supported')
+                html_commands.append(report_message(
+                    f'Editing {thomasa88lib.utils.short_class(entity)} feature is not supported.'))
                 ret = False
         html_commands.append(ret)
     elif action == 'rollToFeature':
@@ -758,7 +830,7 @@ def workspace_pre_deactivate_handler(args):
 def workspace_activated_handler(args):
     #eventArgs = adsk.core.WorkspaceEventArgs.cast(args)
 
-    if ui.activeWorkspace.id == 'FusionSolidEnvironment':
+    if get_active_workspace_id() == 'FusionSolidEnvironment':
         if get_enabled():
             show_palette()
     else:
@@ -767,8 +839,60 @@ def workspace_activated_handler(args):
 
 def document_activated_handler(args):
     #eventArgs = adsk.core.DocumentEventArgs.cast(args)
-    if ui.activeWorkspace.id == 'FusionSolidEnvironment':
+    if get_active_workspace_id() == 'FusionSolidEnvironment':
         if get_enabled():
             show_palette()
+
+def active_selection_changed_handler(args):
+    '''Highlight the timeline row(s) matching the feature selected in Fusion's GUI.
+
+    Best-effort: matching relies on entity identity. Anything that fails is
+    swallowed so the user's selection flow is never disturbed.'''
+    if not HIGHLIGHT_GUI_SELECTION:
+        return
+
+    palette = ui.palettes.itemById('thomasa88_verticalTimelinePalette')
+    if not palette or not palette.isVisible or not html_ready or not timeline_cache_map:
+        return
+
+    selected_ids = []
+    try:
+        eventArgs = adsk.core.ActiveSelectionEventArgs.cast(args)
+
+        # Normalise the selected entities to their native objects, so they can be
+        # matched against the (native) entities referenced by the timeline.
+        selected_natives = []
+        for selection in eventArgs.currentSelection:
+            entity = selection.entity
+            if entity is None:
+                continue
+            native = getattr(entity, 'nativeObject', None) or entity
+            selected_natives.append(native)
+
+        if selected_natives:
+            for node_id, node in timeline_cache_map.items():
+                obj = node.obj
+                if obj is None or obj.isGroup:
+                    continue
+                try:
+                    node_entity = obj.entity
+                except RuntimeError:
+                    # Move/Align and similar do not allow entity access.
+                    continue
+                if node_entity is not None and any(_entities_match(node_entity, n)
+                                                   for n in selected_natives):
+                    selected_ids.append(node_id)
+    except Exception:
+        # Highlighting is purely cosmetic and must never raise.
+        return
+
+    palette.sendInfoToHTML('highlightFeatures', json.dumps({'ids': selected_ids}))
+
+def _entities_match(a, b):
+    '''Best-effort identity comparison between two Fusion API entities.'''
+    try:
+        return a == b
+    except Exception:
+        return False
 
 #########################################################################################
