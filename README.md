@@ -2,7 +2,7 @@
 
 A Fusion 360 add-in that adds a vertical timeline.
 
-![](screenshot.png)
+![](screenshot-dark.png)
 
 The palette adapts to light and dark themes, following your operating system /
 Fusion UI color theme. The functionality is limited at this point (see
