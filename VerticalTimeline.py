@@ -242,63 +242,31 @@ def get_menu_icons():
     if _menu_icons_cache is not None:
         return _menu_icons_cache
 
-    def command_icon(cmd):
+    icons = {}
+
+    # Roll: the exact "Roll Timeline Marker Here" glyph is drawn internally by
+    # the timeline control and is not a resource file, so use Fusion's genuine
+    # roll-forward timeline icon (a marker bar + arrow) instead.
+    roll_icon = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/RollFwd')
+    if roll_icon:
+        icons['rollToFeature'] = roll_icon
+
+    # Delete: borrow the icon from Fusion's own Delete command (the red X).
+    delete_cmd = ui.commandDefinitions.itemById('DeleteCommand')
+    if delete_cmd:
         try:
-            folder = cmd.resourceFolder
+            folder = delete_cmd.resourceFolder
         except (RuntimeError, AttributeError):
-            return None
+            folder = None
         if folder:
             path = f'{folder}/16x16.png'
             if os.path.exists(path):
-                return path
-        return None
+                icons['deleteFeature'] = path
 
-    def icon_by_id(cmd_ids):
-        for cmd_id in cmd_ids:
-            cmd = ui.commandDefinitions.itemById(cmd_id)
-            if cmd:
-                path = command_icon(cmd)
-                if path:
-                    return path, cmd_id
-        return None, None
+    # Suppress and Rename intentionally have no icon - this matches Fusion's
+    # native timeline menu, and the only on-disk suppress icons are joint /
+    # rigid-group specific (misleading for arbitrary features).
 
-    def icon_by_substrings(substrings):
-        # The timeline-marker icon is not a standalone resource file, so we
-        # discover the command by an id substring and borrow its icon.
-        for cmd in ui.commandDefinitions:
-            cid = cmd.id.lower()
-            if any(s in cid for s in substrings):
-                path = command_icon(cmd)
-                if path:
-                    return path, cmd.id
-        return None, None
-
-    # Known command ids to try first, then a substring search as a fallback.
-    cmd_ids = {
-        'deleteFeature': ['DeleteCommand', 'FusionDeleteCommand'],
-        'suppressFeature': ['FusionSuppressFeaturesCommand', 'SuppressFeatures',
-                            'FusionToggleSuppressFeatureCmd'],
-        'rollToFeature': ['FusionMoveTimeMarkerHereCommand',
-                          'FusionRollToHereCommand'],
-        'renameFeature': ['RenameCommand'],
-    }
-    substrings = {
-        'rollToFeature': ['timelinemarker', 'rolltimeline', 'markerhere',
-                          'rolltohere', 'movemarker', 'rollmarker'],
-        'suppressFeature': ['suppressfeature'],
-    }
-
-    icons = {}
-    used = {}
-    for action, ids in cmd_ids.items():
-        path, cid = icon_by_id(ids)
-        if not path and action in substrings:
-            path, cid = icon_by_substrings(substrings[action])
-        if path:
-            icons[action] = path
-            used[action] = cid
-
-    print(f'Vertical Timeline: menu icons resolved: {used}')
     _menu_icons_cache = icons
     return icons
 
