@@ -512,6 +512,13 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         processCommands(ret);
     }
 
+    // Run a bulk action (suppress/delete) on the current selection.
+    async function sendFeaturesAction(action, data) {
+        let ret = await query(action, data);
+        selectedIds = new Set();
+        processCommands(ret);
+    }
+
     async function onFeatureDoubleClick(e) {
         let item = e.target.closest('.feature');
 
@@ -580,10 +587,21 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
 
         let entries;
         if (selectedIds.size >= 2 && selectedIds.has(id)) {
-            // Several rows selected: offer to group them.
+            // Several rows selected: act on all of them.
+            let ids = Array.from(selectedIds);
             entries = [
                 { label: 'Create Group', icon: menuIcons['createGroup'],
                   run: () => createGroup() },
+                { separator: true },
+                { label: 'Suppress', icon: menuIcons['suppressFeature'],
+                  run: () => sendFeaturesAction('suppressFeatures',
+                                                { ids: ids, suppress: true }) },
+                { label: 'Unsuppress',
+                  run: () => sendFeaturesAction('suppressFeatures',
+                                                { ids: ids, suppress: false }) },
+                { separator: true },
+                { label: 'Delete', danger: true, icon: menuIcons['deleteFeature'],
+                  run: () => sendFeaturesAction('deleteFeatures', { ids: ids }) },
             ];
         } else {
             // "Roll Timeline Marker Here" is intentionally the first entry - it

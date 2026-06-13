@@ -663,7 +663,7 @@ def show_palette():
         # the add-in keeps working once CEF support is removed. With the new
         # browser adsk.fusionSendData() returns a Promise, which palette.html
         # handles via async/await.
-        palette = ui.palettes.add('thomasa88_verticalTimelinePalette', f'Vertical Timeline v{manifest["version"]}',
+        palette = ui.palettes.add('thomasa88_verticalTimelinePalette', 'Vertical Timeline',
                                     'palette.html',
                                     True, True, True, 250, 500, True)
         palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateLeft
@@ -886,6 +886,55 @@ def palette_incoming_from_html_handler(args):
         else:
             html_commands.append(report_message(
                 'Select two or more items to create a group.'))
+        html_commands.append(invalidate(send=False))
+    elif action == 'suppressFeatures':
+        suppress = data.get('suppress', True)
+        failures = 0
+        for i in data.get('ids', []):
+            node = timeline_cache_map.get(i)
+            if not node or node.obj is None:
+                continue
+            try:
+                node.obj.isSuppressed = suppress
+            except (RuntimeError, AttributeError):
+                failures += 1
+        if failures:
+            verb = 'suppress' if suppress else 'unsuppress'
+            html_commands.append(report_message(
+                f'Could not {verb} {failures} of the selected items.'))
+        html_commands.append(invalidate(send=False))
+    elif action == 'deleteFeatures':
+        nodes = [timeline_cache_map.get(i) for i in data.get('ids', [])]
+        nodes = [n for n in nodes if n and n.obj is not None]
+
+        # Delete later items first, so deleting one does not invalidate the
+        # timeline positions of the others.
+        def _node_index(n):
+            try:
+                return n.obj.index
+            except (RuntimeError, AttributeError):
+                return -1
+        nodes.sort(key=_node_index, reverse=True)
+
+        failures = 0
+        for node in nodes:
+            obj = node.obj
+            deleted = False
+            try:
+                if obj.isGroup:
+                    deleted = obj.deleteMe(False)
+                else:
+                    entity = obj.entity
+                    target = getattr(entity, 'nativeObject', None) or entity
+                    deleted = target.deleteMe()
+            except (RuntimeError, AttributeError):
+                deleted = False
+            if not deleted:
+                failures += 1
+        if failures:
+            html_commands.append(report_message(
+                f'Could not delete {failures} of the selected items '
+                '(they may be needed by later features).'))
         html_commands.append(invalidate(send=False))
 
     if html_commands:
