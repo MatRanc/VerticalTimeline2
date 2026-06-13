@@ -263,6 +263,11 @@ def get_menu_icons():
             if os.path.exists(path):
                 icons['deleteFeature'] = path
 
+    # Create Group: Fusion's timeline group icon.
+    group_icon = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/GroupFeature')
+    if group_icon:
+        icons['createGroup'] = group_icon
+
     # Suppress and Rename intentionally have no icon - this matches Fusion's
     # native timeline menu, and the only on-disk suppress icons are joint /
     # rigid-group specific (misleading for arbitrary features).
@@ -858,6 +863,29 @@ def palette_incoming_from_html_handler(args):
             html_commands.append(report_message(
                 f'Could not delete this {type_name} '
                 '(it may be needed by later features).'))
+        html_commands.append(invalidate(send=False))
+    elif action == 'createGroup':
+        # Fusion groups are a contiguous timeline range, so group everything
+        # between the first and last selected items (inclusive).
+        indices = []
+        for i in data.get('ids', []):
+            node = timeline_cache_map.get(i)
+            if not node or node.obj is None:
+                continue
+            try:
+                indices.append(node.obj.index)
+            except (RuntimeError, AttributeError):
+                pass
+        if len(indices) >= 2:
+            try:
+                app.activeProduct.timeline.timelineGroups.add(min(indices),
+                                                              max(indices))
+            except (RuntimeError, AttributeError):
+                html_commands.append(report_message(
+                    'Could not create a group from the selected items.'))
+        else:
+            html_commands.append(report_message(
+                'Select two or more items to create a group.'))
         html_commands.append(invalidate(send=False))
 
     if html_commands:

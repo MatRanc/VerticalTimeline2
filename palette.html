@@ -231,6 +231,11 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     // Icon file paths for the right-click menu, supplied by the add-in.
     var menuIcons = {};
 
+    // Ids of the currently selected rows (for multi-select / grouping) and the
+    // last plain-clicked row (the anchor for Shift+click range selection).
+    var selectedIds = new Set();
+    var lastClickedId = null;
+
     var statusTimer = null;
 
     var cancelingEdit = false;
@@ -330,6 +335,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             name.addEventListener('keydown', onFeatureNameClick);
             name.addEventListener('blur', onFeatureNameBlur);
             name.addEventListener('focus', onFeatureNameFocus);
+            name.addEventListener('mousedown', onFeatureNameMouseDown);
             listItem.appendChild(name);
 
             // The browser seems to send click to the rightmost span,
@@ -427,20 +433,82 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         sel.addRange(range);
     }
 
-    async function onFeatureClick(e) {
-        let item = e.target;
-        console.log("feature click")
-        // Disabling event capturing does not seem to work,
-        // so using this test to avoid trigger on name click.
-        // Clicking on the icon should also go here!
-        if (item.classList.contains('icon')) {
-            item = e.target.parentElement;
-        }
-        if (!item.classList.contains('feature')) {
+    function onFeatureClick(e) {
+        let item = e.target.closest('.feature');
+        if (!item) {
             return;
         }
+        let id = parseInt(item.getAttribute('data-id'));
 
-        let ret = await query('selectFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
+        if (e.metaKey || e.ctrlKey) {
+            // Toggle this row in the multi-selection.
+            if (selectedIds.has(id)) {
+                selectedIds.delete(id);
+            } else {
+                selectedIds.add(id);
+            }
+            lastClickedId = id;
+            applySelection();
+            return;
+        }
+        if (e.shiftKey) {
+            // Select the contiguous range from the anchor to this row.
+            selectRange(lastClickedId, id);
+            applySelection();
+            return;
+        }
+        // A plain click on the name edits it (handled by the name element); a
+        // plain click anywhere else selects just this row.
+        if (e.target.classList.contains('name')) {
+            return;
+        }
+        selectedIds = new Set([id]);
+        lastClickedId = id;
+        applySelection();
+        selectFeatureGui(id);
+    }
+
+    async function selectFeatureGui(id) {
+        let ret = await query('selectFeature', { 'id': id });
+        processCommands(ret);
+    }
+
+    // Hold a modifier when clicking a name to (de)select the row instead of
+    // editing it. preventDefault stops the contentEditable from taking focus;
+    // the click then reaches onFeatureClick, which handles the selection.
+    function onFeatureNameMouseDown(e) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) {
+            e.preventDefault();
+        }
+    }
+
+    // Reflect selectedIds on the rows.
+    function applySelection() {
+        for (let el of document.querySelectorAll('.feature')) {
+            el.classList.toggle('selected',
+                selectedIds.has(parseInt(el.getAttribute('data-id'))));
+        }
+    }
+
+    // Select the contiguous range of visible rows between two ids (inclusive).
+    function selectRange(fromId, toId) {
+        let ids = Array.from(document.querySelectorAll('.feature'))
+                       .map(r => parseInt(r.getAttribute('data-id')));
+        let toIndex = ids.indexOf(toId);
+        let fromIndex = (fromId === null) ? toIndex : ids.indexOf(fromId);
+        if (fromIndex === -1 || toIndex === -1) {
+            selectedIds = new Set([toId]);
+            return;
+        }
+        let a = Math.min(fromIndex, toIndex);
+        let b = Math.max(fromIndex, toIndex);
+        selectedIds = new Set(ids.slice(a, b + 1));
+    }
+
+    async function createGroup() {
+        let ids = Array.from(selectedIds);
+        let ret = await query('createGroup', { 'ids': ids });
+        selectedIds = new Set();
         processCommands(ret);
     }
 
@@ -465,6 +533,14 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         let item = e.target.closest('.feature');
         if (!item) {
             return false;
+        }
+        // Right-clicking a row outside the current multi-selection reduces the
+        // selection to just that row (matching the native timeline behavior).
+        let id = parseInt(item.getAttribute('data-id'));
+        if (!selectedIds.has(id)) {
+            selectedIds = new Set([id]);
+            lastClickedId = id;
+            applySelection();
         }
         showContextMenu(item, e.clientX, e.clientY);
         return false;
@@ -502,25 +578,34 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         let rowIcon = item.querySelector('.icon');
         let editIcon = rowIcon ? rowIcon.src : null;
 
-        // "Roll Timeline Marker Here" is intentionally the first entry - it used
-        // to fire automatically on right-click; now it is an explicit choice.
-        let entries = [
-            { label: 'Roll Timeline Marker Here', icon: menuIcons['rollToFeature'],
-              run: () => sendFeatureAction('rollToFeature', id) },
-            { separator: true },
-        ];
-        if (!isGroup) {
-            entries.push({ label: 'Edit', icon: editIcon,
-                           run: () => sendFeatureAction('editFeature', id) });
+        let entries;
+        if (selectedIds.size >= 2 && selectedIds.has(id)) {
+            // Several rows selected: offer to group them.
+            entries = [
+                { label: 'Create Group', icon: menuIcons['createGroup'],
+                  run: () => createGroup() },
+            ];
+        } else {
+            // "Roll Timeline Marker Here" is intentionally the first entry - it
+            // used to fire automatically on right-click; now it is explicit.
+            entries = [
+                { label: 'Roll Timeline Marker Here', icon: menuIcons['rollToFeature'],
+                  run: () => sendFeatureAction('rollToFeature', id) },
+                { separator: true },
+            ];
+            if (!isGroup) {
+                entries.push({ label: 'Edit', icon: editIcon,
+                               run: () => sendFeatureAction('editFeature', id) });
+            }
+            entries.push({ label: 'Rename', icon: menuIcons['renameFeature'],
+                           run: () => startRename(item) });
+            entries.push({ label: isSuppressed ? 'Unsuppress' : 'Suppress',
+                           icon: menuIcons['suppressFeature'],
+                           run: () => sendFeatureAction('suppressFeature', id) });
+            entries.push({ separator: true });
+            entries.push({ label: 'Delete', danger: true, icon: menuIcons['deleteFeature'],
+                           run: () => sendFeatureAction('deleteFeature', id) });
         }
-        entries.push({ label: 'Rename', icon: menuIcons['renameFeature'],
-                       run: () => startRename(item) });
-        entries.push({ label: isSuppressed ? 'Unsuppress' : 'Suppress',
-                       icon: menuIcons['suppressFeature'],
-                       run: () => sendFeatureAction('suppressFeature', id) });
-        entries.push({ separator: true });
-        entries.push({ label: 'Delete', danger: true, icon: menuIcons['deleteFeature'],
-                       run: () => sendFeatureAction('deleteFeature', id) });
 
         for (let entry of entries) {
             if (entry.separator) {
@@ -624,12 +709,10 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         }
     }
 
-    // Highlight the timeline rows whose ids are given (selection in Fusion's GUI).
+    // Reflect the feature(s) selected in Fusion's GUI as the row selection.
     function highlightFeatures(ids) {
-        let idSet = new Set((ids || []).map(String));
-        for (let item of document.querySelectorAll('.feature')) {
-            item.classList.toggle('selected', idSet.has(item.getAttribute('data-id')));
-        }
+        selectedIds = new Set((ids || []).map(Number));
+        applySelection();
     }
 
     async function send(action, data = {}) {
