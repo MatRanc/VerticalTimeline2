@@ -242,9 +242,39 @@ def get_menu_icons():
     if _menu_icons_cache is not None:
         return _menu_icons_cache
 
-    # Candidate Fusion command ids per menu action. The first whose command
-    # exists and has a 16x16 icon on disk wins.
-    candidates = {
+    def command_icon(cmd):
+        try:
+            folder = cmd.resourceFolder
+        except (RuntimeError, AttributeError):
+            return None
+        if folder:
+            path = f'{folder}/16x16.png'
+            if os.path.exists(path):
+                return path
+        return None
+
+    def icon_by_id(cmd_ids):
+        for cmd_id in cmd_ids:
+            cmd = ui.commandDefinitions.itemById(cmd_id)
+            if cmd:
+                path = command_icon(cmd)
+                if path:
+                    return path, cmd_id
+        return None, None
+
+    def icon_by_substrings(substrings):
+        # The timeline-marker icon is not a standalone resource file, so we
+        # discover the command by an id substring and borrow its icon.
+        for cmd in ui.commandDefinitions:
+            cid = cmd.id.lower()
+            if any(s in cid for s in substrings):
+                path = command_icon(cmd)
+                if path:
+                    return path, cmd.id
+        return None, None
+
+    # Known command ids to try first, then a substring search as a fallback.
+    cmd_ids = {
         'deleteFeature': ['DeleteCommand', 'FusionDeleteCommand'],
         'suppressFeature': ['FusionSuppressFeaturesCommand', 'SuppressFeatures',
                             'FusionToggleSuppressFeatureCmd'],
@@ -252,24 +282,23 @@ def get_menu_icons():
                           'FusionRollToHereCommand'],
         'renameFeature': ['RenameCommand'],
     }
+    substrings = {
+        'rollToFeature': ['timelinemarker', 'rolltimeline', 'markerhere',
+                          'rolltohere', 'movemarker', 'rollmarker'],
+        'suppressFeature': ['suppressfeature'],
+    }
 
     icons = {}
-    for action, ids in candidates.items():
-        for cmd_id in ids:
-            cmd = ui.commandDefinitions.itemById(cmd_id)
-            if not cmd:
-                continue
-            try:
-                folder = cmd.resourceFolder
-            except (RuntimeError, AttributeError):
-                folder = None
-            if folder:
-                path = f'{folder}/16x16.png'
-                if os.path.exists(path):
-                    icons[action] = path
-                    break
+    used = {}
+    for action, ids in cmd_ids.items():
+        path, cid = icon_by_id(ids)
+        if not path and action in substrings:
+            path, cid = icon_by_substrings(substrings[action])
+        if path:
+            icons[action] = path
+            used[action] = cid
 
-    print(f'Vertical Timeline: menu icons resolved for {sorted(icons.keys())}')
+    print(f'Vertical Timeline: menu icons resolved: {used}')
     _menu_icons_cache = icons
     return icons
 
