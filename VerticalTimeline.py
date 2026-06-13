@@ -694,68 +694,85 @@ def palette_incoming_from_html_handler(args):
         ret = True
 
         design: adsk.fusion.Design = app.activeProduct
-        entity = obj.entity
-
-        # Build the new selection in a transactory way, so the current selection
-        # is not cleared if the entity turns out to be unselectable.
-        newSelection = adsk.core.ObjectCollection.create()
-
-        # Whether the selected entity can be edited. Selecting only the produced
-        # bodies (the fallback below) allows highlighting but not editing.
-        editable = True
-
-        if isinstance(entity, adsk.fusion.Occurrence):
-            associated_component = entity.sourceComponent
-        elif isinstance(entity, adsk.fusion.ConstructionPlane):
-            associated_component = entity.parent
-        else:
-            associated_component = entity.parentComponent
-
-        if associated_component == design.rootComponent:
-            # There are no occurrences of root - just the single root instance.
-            # The entity can be selected directly.
-            newSelection.add(entity)
-        else:
-            # The entity lives inside a component that may be instanced several
-            # times. Select it in every occurrence context (uses
-            # allOccurrencesByComponent to also reach nested occurrences).
-            in_occurrences = design.rootComponent.allOccurrencesByComponent(associated_component)
-            if hasattr(entity, 'createForAssemblyContext'):
-                # Features (Box, Cylinder, Extrude, ...), sketches, planes and
-                # occurrences all support assembly-context proxies. Selecting the
-                # feature proxy itself - rather than just the bodies it produced -
-                # is what lets the edit command operate on the feature.
-                for occurrence in in_occurrences:
-                    newSelection.add(entity.createForAssemblyContext(occurrence))
-            elif hasattr(entity, 'bodies'):
-                # Fallback for entities that do not expose an assembly-context
-                # proxy: select the produced bodies. The feature itself cannot be
-                # edited this way.
-                editable = False
-                for body in entity.bodies:
-                    for occurrence in in_occurrences:
-                        newSelection.add(body.createForAssemblyContext(occurrence))
 
         try:
-            ui.activeSelections.all = newSelection
-        except Exception as e:
-            html_commands.append(report_message(
-                f'Failed to select {thomasa88lib.utils.short_class(entity)}: {e}'))
-            ret = False
+            entity = obj.entity
+        except RuntimeError:
+            # Timeline groups have no associated model entity ('Associated
+            # feature is invalid.'), and some features (e.g. Move/Align) do not
+            # expose theirs. There is nothing to select in the model.
+            entity = None
 
-        if ret and action == 'editFeature':
-            command_id = get_feature_edit_command_id(obj)
-            if not editable:
+        if entity is None:
+            # Not an error - e.g. the user may just be clicking a group to
+            # rename it. Only report when an edit was explicitly requested, and
+            # never let entity access crash the handler.
+            if action == 'editFeature':
                 html_commands.append(report_message(
-                    f'Editing {thomasa88lib.utils.short_class(entity)} inside a '
-                    'component is not supported.'))
+                    'This timeline item cannot be selected or edited.'))
                 ret = False
-            elif command_id:
-                ui.commandDefinitions.itemById(command_id).execute()
+        else:
+            # Build the new selection in a transactory way, so the current selection
+            # is not cleared if the entity turns out to be unselectable.
+            newSelection = adsk.core.ObjectCollection.create()
+
+            # Whether the selected entity can be edited. Selecting only the produced
+            # bodies (the fallback below) allows highlighting but not editing.
+            editable = True
+
+            if isinstance(entity, adsk.fusion.Occurrence):
+                associated_component = entity.sourceComponent
+            elif isinstance(entity, adsk.fusion.ConstructionPlane):
+                associated_component = entity.parent
             else:
+                associated_component = entity.parentComponent
+
+            if associated_component == design.rootComponent:
+                # There are no occurrences of root - just the single root instance.
+                # The entity can be selected directly.
+                newSelection.add(entity)
+            else:
+                # The entity lives inside a component that may be instanced several
+                # times. Select it in every occurrence context (uses
+                # allOccurrencesByComponent to also reach nested occurrences).
+                in_occurrences = design.rootComponent.allOccurrencesByComponent(associated_component)
+                if hasattr(entity, 'createForAssemblyContext'):
+                    # Features (Box, Cylinder, Extrude, ...), sketches, planes and
+                    # occurrences all support assembly-context proxies. Selecting the
+                    # feature proxy itself - rather than just the bodies it produced -
+                    # is what lets the edit command operate on the feature.
+                    for occurrence in in_occurrences:
+                        newSelection.add(entity.createForAssemblyContext(occurrence))
+                elif hasattr(entity, 'bodies'):
+                    # Fallback for entities that do not expose an assembly-context
+                    # proxy: select the produced bodies. The feature itself cannot be
+                    # edited this way.
+                    editable = False
+                    for body in entity.bodies:
+                        for occurrence in in_occurrences:
+                            newSelection.add(body.createForAssemblyContext(occurrence))
+
+            try:
+                ui.activeSelections.all = newSelection
+            except Exception as e:
                 html_commands.append(report_message(
-                    f'Editing {thomasa88lib.utils.short_class(entity)} feature is not supported.'))
+                    f'Failed to select {thomasa88lib.utils.short_class(entity)}: {e}'))
                 ret = False
+
+            if ret and action == 'editFeature':
+                command_id = get_feature_edit_command_id(obj)
+                if not editable:
+                    html_commands.append(report_message(
+                        f'Editing {thomasa88lib.utils.short_class(entity)} inside a '
+                        'component is not supported.'))
+                    ret = False
+                elif command_id:
+                    ui.commandDefinitions.itemById(command_id).execute()
+                else:
+                    html_commands.append(report_message(
+                        f'Editing {thomasa88lib.utils.short_class(entity)} feature is not supported.'))
+                    ret = False
+
         html_commands.append(ret)
     elif action == 'rollToFeature':
         node = timeline_cache_map[data['id']]

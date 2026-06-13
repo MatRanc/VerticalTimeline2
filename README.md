@@ -46,6 +46,8 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   * Fixed a startup error (`InternalValidationError : pActiveEnvironment`)
     caused by reading the active workspace before Fusion had an active
     environment (e.g. on the Home screen).
+  * Fixed a crash (`Associated feature is invalid`) when clicking or renaming a
+    timeline group; groups and entity-less items are now handled gracefully.
   * Correctly select and edit primitive features (e.g. *Box*, *Cylinder*)
     inside components by selecting the feature proxy rather than its bodies.
   * Highlight the timeline row matching the feature selected in the Fusion GUI.
