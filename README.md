@@ -23,10 +23,16 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
 * Click an item to select it.
 * Double-click on an item to edit it.
 * Click on an item text to rename it.
-* Right click an item to roll to it.
+* Right-click an item for a context menu: *Roll Timeline Marker Here*, *Edit*,
+  *Rename*, *Suppress*/*Unsuppress*, and *Delete*.
 
 Selecting a feature in the Fusion GUI also highlights the matching row in the
 timeline.
+
+The palette shows its own context menu rather than Fusion's native timeline
+menu. Some native entries — *Create Selection Set*, *Configure*, *Find in
+Browser*, *Find in Window* — have no add-in API to invoke, so they are not
+included.
 
 The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. Press *Shift+S* in Fusion 360™ and go to the *Add-Ins* tab.
 

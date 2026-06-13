@@ -173,9 +173,17 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 display: none;
             }
             .context-menu-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
                 padding: 4px 14px;
                 white-space: nowrap;
                 cursor: default;
+            }
+            .context-menu-icon {
+                width: 16px;
+                height: 16px;
+                flex: 0 0 16px;
             }
             .context-menu-item:hover {
                 background-color: var(--hover-bg);
@@ -220,6 +228,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
 
     var collapsedGroups = new Set();
 
+    // Icon file paths for the right-click menu, supplied by the add-in.
+    var menuIcons = {};
+
     var statusTimer = null;
 
     var cancelingEdit = false;
@@ -236,6 +247,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 case 'setTimeline':
                     let message = document.getElementById('message');
                     message.innerText = data['message'];
+
+                    menuIcons = data['menu-icons'] || {};
 
                     let timeline = document.getElementById('timeline');
                     timeline.innerHTML = '';
@@ -484,20 +497,29 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         let isGroup = item.classList.contains('feature-group-header');
         let isSuppressed = item.getAttribute('data-suppressed') === '1';
 
+        // The 'Edit' item shows the feature's own icon, just like Fusion's
+        // native "Edit <type>" entry.
+        let rowIcon = item.querySelector('.icon');
+        let editIcon = rowIcon ? rowIcon.src : null;
+
         // "Roll Timeline Marker Here" is intentionally the first entry - it used
         // to fire automatically on right-click; now it is an explicit choice.
         let entries = [
-            { label: 'Roll Timeline Marker Here', run: () => sendFeatureAction('rollToFeature', id) },
+            { label: 'Roll Timeline Marker Here', icon: menuIcons['rollToFeature'],
+              run: () => sendFeatureAction('rollToFeature', id) },
             { separator: true },
         ];
         if (!isGroup) {
-            entries.push({ label: 'Edit', run: () => sendFeatureAction('editFeature', id) });
+            entries.push({ label: 'Edit', icon: editIcon,
+                           run: () => sendFeatureAction('editFeature', id) });
         }
-        entries.push({ label: 'Rename', run: () => startRename(item) });
+        entries.push({ label: 'Rename', icon: menuIcons['renameFeature'],
+                       run: () => startRename(item) });
         entries.push({ label: isSuppressed ? 'Unsuppress' : 'Suppress',
+                       icon: menuIcons['suppressFeature'],
                        run: () => sendFeatureAction('suppressFeature', id) });
         entries.push({ separator: true });
-        entries.push({ label: 'Delete', danger: true,
+        entries.push({ label: 'Delete', danger: true, icon: menuIcons['deleteFeature'],
                        run: () => sendFeatureAction('deleteFeature', id) });
 
         for (let entry of entries) {
@@ -509,7 +531,20 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             }
             let el = document.createElement('div');
             el.className = 'context-menu-item' + (entry.danger ? ' danger' : '');
-            el.textContent = entry.label;
+
+            // Icon column (an <img> when we have one, otherwise a spacer so all
+            // labels line up).
+            let icon = document.createElement(entry.icon ? 'img' : 'span');
+            icon.className = 'context-menu-icon';
+            if (entry.icon) {
+                icon.src = entry.icon;
+            }
+            el.appendChild(icon);
+
+            let label = document.createElement('span');
+            label.textContent = entry.label;
+            el.appendChild(label);
+
             el.addEventListener('click', (ev) => {
                 ev.stopPropagation();
                 hideContextMenu();

@@ -232,6 +232,47 @@ def get_image_path(subpath):
     _image_path_cache[subpath] = result
     return result
 
+# Icons for the palette right-click menu, taken from Fusion's own command
+# resources so the menu matches the native look. Resolved once and cached; any
+# command/icon that cannot be found is simply omitted (no icon shown for it).
+# The 'Edit' item uses the feature's own icon and is handled in the palette.
+_menu_icons_cache = None
+def get_menu_icons():
+    global _menu_icons_cache
+    if _menu_icons_cache is not None:
+        return _menu_icons_cache
+
+    # Candidate Fusion command ids per menu action. The first whose command
+    # exists and has a 16x16 icon on disk wins.
+    candidates = {
+        'deleteFeature': ['DeleteCommand', 'FusionDeleteCommand'],
+        'suppressFeature': ['FusionSuppressFeaturesCommand', 'SuppressFeatures',
+                            'FusionToggleSuppressFeatureCmd'],
+        'rollToFeature': ['FusionMoveTimeMarkerHereCommand',
+                          'FusionRollToHereCommand'],
+        'renameFeature': ['RenameCommand'],
+    }
+
+    icons = {}
+    for action, ids in candidates.items():
+        for cmd_id in ids:
+            cmd = ui.commandDefinitions.itemById(cmd_id)
+            if not cmd:
+                continue
+            try:
+                folder = cmd.resourceFolder
+            except (RuntimeError, AttributeError):
+                folder = None
+            if folder:
+                path = f'{folder}/16x16.png'
+                if os.path.exists(path):
+                    icons[action] = path
+                    break
+
+    print(f'Vertical Timeline: menu icons resolved for {sorted(icons.keys())}')
+    _menu_icons_cache = icons
+    return icons
+
 def find_commands(substring):
     return [c.id for c in ui.commandDefinitions if substring in c.id.lower()]
 
@@ -282,6 +323,7 @@ def invalidate(send=True, clear=False):
          'features': features,
          'max-parents': max_parents,
          'message': message,
+         'menu-icons': get_menu_icons(),
     }
 
     if not send:
@@ -801,16 +843,24 @@ def palette_incoming_from_html_handler(args):
         node = timeline_cache_map[data['id']]
         obj = node.obj
         deleted = False
+        type_name = 'item'
         try:
             if obj.isGroup:
                 # Delete the group itself; the features inside it remain.
                 deleted = obj.deleteMe(False)
             else:
-                deleted = obj.entity.deleteMe()
+                entity = obj.entity
+                type_name = thomasa88lib.utils.short_class(entity)
+                # Delete the native object - deleting an assembly-context proxy
+                # (a feature shown inside a component) is often refused.
+                target = getattr(entity, 'nativeObject', None) or entity
+                deleted = target.deleteMe()
         except (RuntimeError, AttributeError):
             deleted = False
         if not deleted:
-            html_commands.append(report_message('Could not delete this item.'))
+            html_commands.append(report_message(
+                f'Could not delete this {type_name} '
+                '(it may be needed by later features).'))
         html_commands.append(invalidate(send=False))
 
     if html_commands:
