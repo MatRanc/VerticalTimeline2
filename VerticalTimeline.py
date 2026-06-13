@@ -787,6 +787,31 @@ def palette_incoming_from_html_handler(args):
             obj = obj.parentGroup
         html_commands.append(obj.rollTo(False))
         html_commands.append(invalidate(send=False))
+    elif action == 'suppressFeature':
+        node = timeline_cache_map[data['id']]
+        obj = node.obj
+        new_state = not obj.isSuppressed
+        try:
+            obj.isSuppressed = new_state
+        except (RuntimeError, AttributeError):
+            html_commands.append(report_message(
+                f'Cannot {"suppress" if new_state else "unsuppress"} this item.'))
+        html_commands.append(invalidate(send=False))
+    elif action == 'deleteFeature':
+        node = timeline_cache_map[data['id']]
+        obj = node.obj
+        deleted = False
+        try:
+            if obj.isGroup:
+                # Delete the group itself; the features inside it remain.
+                deleted = obj.deleteMe(False)
+            else:
+                deleted = obj.entity.deleteMe()
+        except (RuntimeError, AttributeError):
+            deleted = False
+        if not deleted:
+            html_commands.append(report_message('Could not delete this item.'))
+        html_commands.append(invalidate(send=False))
 
     if html_commands:
         htmlArgs.returnData = json.dumps(html_commands)

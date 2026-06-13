@@ -31,6 +31,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 --name-hover-outline: silver;
                 --name-focus-bg: #ffffff;
                 --status-fg: #a05000;
+                --menu-bg: #ffffff;
+                --menu-border: #c0c0c0;
+                --danger-fg: #c0392b;
             }
             @media (prefers-color-scheme: dark) {
                 :root {
@@ -44,6 +47,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     --name-hover-outline: #777777;
                     --name-focus-bg: #1e1e1e;
                     --status-fg: #e0a35c;
+                    --menu-bg: #3a3a3a;
+                    --menu-border: #555555;
+                    --danger-fg: #e57373;
                 }
             }
             body {
@@ -151,6 +157,37 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             #status:empty {
                 display: none;
             }
+            .context-menu {
+                position: fixed;
+                z-index: 1000;
+                min-width: 170px;
+                padding: 4px 0;
+                background-color: var(--menu-bg);
+                color: var(--fg);
+                border: 1px solid var(--menu-border);
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+                user-select: none;
+                -webkit-user-select: none;
+            }
+            .context-menu.hidden {
+                display: none;
+            }
+            .context-menu-item {
+                padding: 4px 14px;
+                white-space: nowrap;
+                cursor: default;
+            }
+            .context-menu-item:hover {
+                background-color: var(--hover-bg);
+            }
+            .context-menu-item.danger {
+                color: var(--danger-fg);
+            }
+            .context-menu-separator {
+                height: 1px;
+                margin: 4px 0;
+                background-color: var(--menu-border);
+            }
         </style>
     </head>
     <body>
@@ -241,6 +278,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             }
             listItem.setAttribute('data-id', feature['id']);
             listItem.setAttribute('data-name', feature.name);
+            if (feature.suppressed) {
+                listItem.setAttribute('data-suppressed', '1');
+            }
 
             listItem.addEventListener('click', onFeatureClick);
             listItem.addEventListener('dblclick', onFeatureDoubleClick);
@@ -263,7 +303,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 }
                 addParentBars(listItem, feature, maxParents);
             }
-            listItem.title = `${titlePrefix}Right-click to roll here.`;
+            listItem.title = `${titlePrefix}Right-click for options.`;
 
             let image = document.createElement('img');
             image.src = feature['image'];
@@ -398,22 +438,109 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         processCommands(ret);
     }
 
-    async function onFeatureContextMenu(e) {
-        if (e.target.classList.contains('name')) {
-            // Don't block normal right click in text edit
+    function onFeatureContextMenu(e) {
+        // While actively editing a name, keep the browser's native menu so
+        // copy/paste still work in the text field.
+        if (e.target.classList.contains('name') && e.target === document.activeElement) {
             return true;
         }
 
-        // Block the context menu synchronously, before awaiting Fusion. With the
-        // new (Qt) browser query() is async, so preventDefault() must run now -
-        // after an await the browser would already have shown the menu.
+        // Show our own menu instead of acting immediately. preventDefault() must
+        // run synchronously so the browser's native menu never appears.
         e.preventDefault();
 
         let item = e.target.closest('.feature');
-        let ret = await query('rollToFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
-        processCommands(ret);
-
+        if (!item) {
+            return false;
+        }
+        showContextMenu(item, e.clientX, e.clientY);
         return false;
+    }
+
+    // ---- Custom right-click context menu ----
+
+    var contextMenuEl = null;
+
+    function getContextMenuEl() {
+        if (!contextMenuEl) {
+            contextMenuEl = document.createElement('div');
+            contextMenuEl.className = 'context-menu hidden';
+            document.body.appendChild(contextMenuEl);
+        }
+        return contextMenuEl;
+    }
+
+    function hideContextMenu() {
+        if (contextMenuEl) {
+            contextMenuEl.classList.add('hidden');
+        }
+    }
+
+    function showContextMenu(item, x, y) {
+        let menu = getContextMenuEl();
+        menu.innerHTML = '';
+
+        let id = parseInt(item.getAttribute('data-id'));
+        let isGroup = item.classList.contains('feature-group-header');
+        let isSuppressed = item.getAttribute('data-suppressed') === '1';
+
+        // "Roll Timeline Marker Here" is intentionally the first entry - it used
+        // to fire automatically on right-click; now it is an explicit choice.
+        let entries = [
+            { label: 'Roll Timeline Marker Here', run: () => sendFeatureAction('rollToFeature', id) },
+            { separator: true },
+        ];
+        if (!isGroup) {
+            entries.push({ label: 'Edit', run: () => sendFeatureAction('editFeature', id) });
+        }
+        entries.push({ label: 'Rename', run: () => startRename(item) });
+        entries.push({ label: isSuppressed ? 'Unsuppress' : 'Suppress',
+                       run: () => sendFeatureAction('suppressFeature', id) });
+        entries.push({ separator: true });
+        entries.push({ label: 'Delete', danger: true,
+                       run: () => sendFeatureAction('deleteFeature', id) });
+
+        for (let entry of entries) {
+            if (entry.separator) {
+                let sep = document.createElement('div');
+                sep.className = 'context-menu-separator';
+                menu.appendChild(sep);
+                continue;
+            }
+            let el = document.createElement('div');
+            el.className = 'context-menu-item' + (entry.danger ? ' danger' : '');
+            el.textContent = entry.label;
+            el.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                hideContextMenu();
+                entry.run();
+            });
+            menu.appendChild(el);
+        }
+
+        // Position at the cursor, then nudge back into view if it would overflow.
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
+        menu.classList.remove('hidden');
+        let rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menu.style.left = Math.max(0, window.innerWidth - rect.width - 4) + 'px';
+        }
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = Math.max(0, window.innerHeight - rect.height - 4) + 'px';
+        }
+    }
+
+    async function sendFeatureAction(action, id) {
+        let ret = await query(action, { 'id': id });
+        processCommands(ret);
+    }
+
+    function startRename(item) {
+        let name = item.querySelector('.name');
+        if (name) {
+            name.focus();
+        }
     }
 
     async function storeFeatureName(item) {
@@ -497,6 +624,22 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         console.log("HTML ready");
         send('ready');
     }
+
+    // Dismiss the context menu on any interaction outside it.
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            hideContextMenu();
+        }
+    });
+    window.addEventListener('blur', hideContextMenu);
+    window.addEventListener('scroll', hideContextMenu, true);
+    document.addEventListener('contextmenu', (e) => {
+        // Right-clicking empty space (not a feature row) closes the menu.
+        if (!e.target.closest('.feature')) {
+            hideContextMenu();
+        }
+    });
 
     document.body.onload = waitForSdk;
     console.log("script end");
