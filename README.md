@@ -25,6 +25,8 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
 * Click on an item text to rename it.
 * Right-click an item for a context menu: *Roll Timeline Marker Here*, *Edit*,
   *Rename*, *Suppress*/*Unsuppress*, and *Delete*.
+* *Cmd*/*Ctrl*-click (or *Shift*-click for a range) to select multiple items,
+  then right-click to *Create Group* or *Suppress*/*Delete* them together.
 
 Selecting a feature in the Fusion GUI also highlights the matching row in the
 timeline.
@@ -42,6 +44,15 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.4.0
+  * New right-click context menu on timeline items: *Roll Timeline Marker Here*,
+    *Edit*, *Rename*, *Suppress*/*Unsuppress*, and *Delete*. Right-clicking no
+    longer rolls the marker automatically.
+  * Select multiple rows (*Cmd*/*Ctrl*-click to toggle, *Shift*-click for a
+    range) and *Create Group* from the selection, plus bulk
+    *Suppress*/*Unsuppress*/*Delete*.
+  * Menu items show Fusion's own icons where available.
+  * Removed the version number from the palette title.
 * v 0.3.0
   * Updated for the latest Fusion. The palette now uses the new (Qt) web
     browser instead of the deprecated CEF browser, with the matching async
