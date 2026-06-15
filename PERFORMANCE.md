@@ -23,12 +23,14 @@ Every command completion calls `invalidate()` (`VerticalTimeline.py:307`), which
 3. `get_component_parent_map` (`VerticalTimeline.py:560`) walks **all**
    occurrences every refresh, even though component structure rarely changes.
 4. The palette JS then does `timeline.innerHTML = ''` and `appendItems`
-   (`palette.html`) rebuilds every row from scratch and attaches ~6 event
+   (`palette.html`) rebuilds every row from scratch and attaches ~7 event
    listeners per row, every refresh.
 
-Common interactions (rolling the marker, renaming, selecting) all trigger the
-full O(N) recompute + full DOM teardown even when the feature *list* is
-unchanged.
+Rolling the marker and suppressing/unsuppressing leave the feature *list*
+unchanged yet still trigger the full O(N) recompute + full DOM teardown (both
+call `invalidate()`) — this is what Tier 1 #1/#2 target. Renaming already
+updates the row in place, and GUI/palette selection uses the O(1) highlight
+path shipped in v0.5.0; neither does a full rebuild.
 
 ## Tier 1 — biggest wins
 
@@ -61,7 +63,7 @@ unchanged.
 
 4. **Event delegation.** Attach `click` / `dblclick` / `contextmenu` once on the
    `#timeline` container and dispatch via `e.target.closest('.feature')`, instead
-   of ~6 `addEventListener` calls per row per rebuild. The handlers already use
+   of ~7 `addEventListener` calls per row per rebuild. The handlers already use
    `closest` / target tests, so this is a natural refactor. File: `palette.html`
    `appendItems`.
 
@@ -83,10 +85,9 @@ largest win) → #4, #6.
 
 ## How to verify the work when it's done
 
-- Add temporary timing around `invalidate()` and the JS render behind the
-  existing `debug` flag (`run()`), open a large parametric design, and record
-  ms/refresh before vs. after.
+- Add temporary timing around `invalidate()` and the JS render — gate it on the
+  `debug` flag in `run()` (currently declared but unused, so wire it up first),
+  open a large parametric design, and record ms/refresh before vs. after.
 - Regression-check the interactions that share the refresh path: roll to a
   feature, rename, add/suppress a feature, collapse/expand groups, and GUI
   selection → row highlight — all must still behave as today.
-</content>
