@@ -15,6 +15,8 @@ Unpack it into `API\AddIns` (see [How to install an add-in or script in Fusion 3
 
 Make sure the directory is named `VerticalTimeline`, with no suffix.
 
+Once installed, turn the timeline on with *File* -> *View* -> *Toggle Vertical Timeline*.
+
 ## Usage
 
 The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
