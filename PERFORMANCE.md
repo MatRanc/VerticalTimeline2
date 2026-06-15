@@ -11,7 +11,9 @@ Those items are removed from the list below.
 
 ## Where the time goes
 
-Every command completion calls `invalidate()` (`VerticalTimeline.py:307`), which:
+Most command completions trigger `invalidate()` (`VerticalTimeline.py:307`) via
+`command_terminated_handler`, which skips `SelectCommand`/`CommitCommand` and
+non-completed terminations. `invalidate()`:
 
 1. Re-reads the whole timeline and rebuilds the tree (`get_features` →
    `flatten_timeline` → `build_timeline_tree` → `get_component_parent_map` →
@@ -37,8 +39,11 @@ path shipped in v0.5.0; neither does a full rebuild.
 1. **Skip per-feature work that didn't change (structure vs. state).** Split the
    payload into *structure* (feature list, type, image, parent-components —
    changes only on add/remove/reorder) and *state* (name, `isSuppressed`,
-   `isRolledBack`, marker position — changes often). Cache structure keyed by a
-   stable id and only recompute it when the timeline count/order changes.
+   `isRolledBack`, marker position — changes often). Caveat: an occurrence's
+   `parent-components` collapses to `[]` while it is rolled back/suppressed
+   (`get_feature_parent_path`), so it's not purely structural. Cache structure
+   keyed by a stable id and only recompute it when the timeline count/order
+   changes.
    Re-read only the volatile state on a normal refresh. Files: `get_features` /
    `get_features_from_node` / `invalidate`
    (`VerticalTimeline.py:307,372,383`).
@@ -63,9 +68,10 @@ path shipped in v0.5.0; neither does a full rebuild.
 
 4. **Event delegation.** Attach `click` / `dblclick` / `contextmenu` once on the
    `#timeline` container and dispatch via `e.target.closest('.feature')`, instead
-   of ~7 `addEventListener` calls per row per rebuild. The handlers already use
-   `closest` / target tests, so this is a natural refactor. File: `palette.html`
-   `appendItems`.
+   of re-attaching those three to every row on every rebuild. (That removes 3 of
+   the ~7 listeners a row gets; the 4 name-field listeners are a separate
+   concern.) These handlers already use `closest` / target tests, so this is a
+   natural refactor. File: `palette.html` `appendItems`.
 
 5. **In-place updates instead of full teardown** for state-only refreshes (ties
    to #1/#2): toggle classes and set names on existing rows; keep full rebuild
