@@ -184,8 +184,8 @@ FEATURE_RESOURCE_MAP = {
 
 UNKNOWN_FEATURE_IMAGE = 'Fusion/UI/FusionUI/Resources/finish/finishX'
 
-def get_feature_image(obj):
-    match = get_feature_res(obj)
+def get_feature_image(obj, entity=None, fusion_type=None):
+    match = get_feature_res(obj, entity, fusion_type)
 
     image = None
     if match and match[0]:
@@ -206,10 +206,15 @@ def get_feature_edit_command_id(obj):
     else:
         return match[1]
 
-def get_feature_res(obj):
-    entity = obj.entity
-    fusionType = thomasa88lib.utils.short_class(entity)
-    match = FEATURE_RESOURCE_MAP.get(fusionType)
+def get_feature_res(obj, entity=None, fusion_type=None):
+    # entity / fusion_type are passed in on the hot refresh path so we don't
+    # re-fetch obj.entity (an API round-trip) and recompute short_class for
+    # every feature; default to reading them for the occasional direct caller.
+    if entity is None:
+        entity = obj.entity
+    if fusion_type is None:
+        fusion_type = thomasa88lib.utils.short_class(entity)
+    match = FEATURE_RESOURCE_MAP.get(fusion_type)
     if callable(match):
         try:
             match = match(obj)
@@ -360,16 +365,22 @@ class TimelineObjectNode:
 
 timeline_cache_tree = None
 timeline_cache_map = None
+# native entityToken -> node id, built while we already hold each feature's
+# entity. Lets active_selection_changed_handler map a GUI selection to a row
+# with an O(1) lookup instead of an obj.entity API call per node on every click.
+timeline_cache_entity_index = {}
 def get_features(timeline):
     global timeline_cache_tree, timeline_cache_map
     flat_timeline = thomasa88lib.timeline.flatten_timeline(timeline)
     timeline_cache_tree, timeline_cache_map = build_timeline_tree(flat_timeline)
+    timeline_cache_entity_index.clear()
 
     component_parent_map = get_component_parent_map()
+    design = app.activeProduct
 
-    return get_features_from_node(timeline_cache_tree, component_parent_map)
+    return get_features_from_node(timeline_cache_tree, component_parent_map, design)
 
-def get_features_from_node(timeline_tree_node, component_parent_map):
+def get_features_from_node(timeline_tree_node, component_parent_map, design):
     features = []
     max_parents = 0
     for i, child_node in enumerate(timeline_tree_node.children):
@@ -388,7 +399,8 @@ def get_features_from_node(timeline_tree_node, component_parent_map):
             feature['type'] = 'GROUP'
             feature['image'] = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/GroupFeature')
             feature['children'], group_max_parents = get_features_from_node(child_node,
-                                                                            component_parent_map)
+                                                                            component_parent_map,
+                                                                            design)
             if group_max_parents > max_parents:
                 max_parents = group_max_parents
         else:
@@ -399,15 +411,27 @@ def get_features_from_node(timeline_tree_node, component_parent_map):
                 entity = None
             
             if entity:
-                feature['type'] = thomasa88lib.utils.short_class(obj.entity)
-                feature['image'] = get_feature_image(obj)
+                feature_type = thomasa88lib.utils.short_class(entity)
+                feature['type'] = feature_type
+
+                # Index the native entity's token so GUI-selection highlighting
+                # is an O(1) lookup. Best-effort: features whose token can't be
+                # read are simply not matchable, same as before.
+                native = getattr(entity, 'nativeObject', None) or entity
+                try:
+                    timeline_cache_entity_index[native.entityToken] = child_node.id
+                except Exception:
+                    pass
+
+                feature['image'] = get_feature_image(obj, entity, feature_type)
                 # Parent-path resolution dips into .parent / .parentComponent /
                 # .component on the live design, any of which can be missing or
                 # inaccessible for a feature that is mid-removal or while a
                 # document is closing. It is non-essential display metadata, so
                 # degrade to no parent path rather than crashing the refresh.
                 try:
-                    parents = get_feature_parent_path(component_parent_map, obj)
+                    parents = get_feature_parent_path(component_parent_map, obj,
+                                                      entity, feature_type, design)
                 except Exception:
                     parents = []
                 feature['parent-components'] = parents
@@ -444,11 +468,15 @@ def get_features_from_node(timeline_tree_node, component_parent_map):
 
     return (features, max_parents)
 
-def get_feature_parent_path(component_parent_map, obj):
-    design = app.activeProduct
+def get_feature_parent_path(component_parent_map, obj, entity=None, fusion_type=None, design=None):
+    # entity / fusion_type / design are passed in on the hot refresh path to
+    # avoid re-reading obj.entity, recomputing short_class, and fetching
+    # app.activeProduct once per feature.
+    if design is None:
+        design = app.activeProduct
 
-    feature = obj.entity
-    feature_type = thomasa88lib.utils.short_class(feature)
+    feature = obj.entity if entity is None else entity
+    feature_type = fusion_type if fusion_type is not None else thomasa88lib.utils.short_class(feature)
     if feature_type == 'Occurrence':
         if obj.isRolledBack or obj.isSuppressed:
             # No parent component will be available
@@ -1051,53 +1079,36 @@ def document_activated_handler(args):
 def active_selection_changed_handler(args):
     '''Highlight the timeline row(s) matching the feature selected in Fusion's GUI.
 
-    Best-effort: matching relies on entity identity. Anything that fails is
-    swallowed so the user's selection flow is never disturbed.'''
+    Best-effort: each selected entity's native token is looked up in the index
+    built at refresh time, so this stays O(selected) instead of an obj.entity
+    API call per timeline node. Anything that fails is swallowed so the user's
+    selection flow is never disturbed.'''
     if not HIGHLIGHT_GUI_SELECTION:
         return
 
     palette = ui.palettes.itemById('thomasa88_verticalTimelinePalette')
-    if not palette or not palette.isVisible or not html_ready or not timeline_cache_map:
+    if not palette or not palette.isVisible or not html_ready or not timeline_cache_entity_index:
         return
 
     selected_ids = []
     try:
         eventArgs = adsk.core.ActiveSelectionEventArgs.cast(args)
-
-        # Normalise the selected entities to their native objects, so they can be
-        # matched against the (native) entities referenced by the timeline.
-        selected_natives = []
         for selection in eventArgs.currentSelection:
             entity = selection.entity
             if entity is None:
                 continue
             native = getattr(entity, 'nativeObject', None) or entity
-            selected_natives.append(native)
-
-        if selected_natives:
-            for node_id, node in timeline_cache_map.items():
-                obj = node.obj
-                if obj is None or obj.isGroup:
-                    continue
-                try:
-                    node_entity = obj.entity
-                except RuntimeError:
-                    # Move/Align and similar do not allow entity access.
-                    continue
-                if node_entity is not None and any(_entities_match(node_entity, n)
-                                                   for n in selected_natives):
-                    selected_ids.append(node_id)
+            try:
+                token = native.entityToken
+            except Exception:
+                continue
+            node_id = timeline_cache_entity_index.get(token)
+            if node_id is not None:
+                selected_ids.append(node_id)
     except Exception:
         # Highlighting is purely cosmetic and must never raise.
         return
 
     palette.sendInfoToHTML('highlightFeatures', json.dumps({'ids': selected_ids}))
-
-def _entities_match(a, b):
-    '''Best-effort identity comparison between two Fusion API entities.'''
-    try:
-        return a == b
-    except Exception:
-        return False
 
 #########################################################################################

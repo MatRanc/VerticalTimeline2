@@ -45,6 +45,12 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.5.0
+  * Performance: highlighting the timeline row for the feature selected in the
+    GUI is now a direct lookup instead of scanning every timeline item on each
+    selection change, so large designs no longer stutter on each click.
+  * Performance: the palette refresh now reads each feature's data once instead
+    of making several redundant Fusion API calls per feature.
 * v 0.4.1
   * Fixed a crash (error dialog) when closing a pure assembly file, caused by
     reading a construction plane's definition while the document was being torn
