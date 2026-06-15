@@ -43,6 +43,16 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.4.1
+  * Fixed a crash (error dialog) when closing a pure assembly file, caused by
+    reading a construction plane's definition while the document was being torn
+    down.
+  * Fixed a crash (`KeyError`) when removing a component, caused by the timeline
+    still referencing the component after the parent-component map had been
+    rebuilt without it.
+  * Hardened the palette refresh and click handlers so a design that is
+    momentarily out of sync (during a file close or a mutating command) no
+    longer produces a traceback dialog.
 * v 0.4.0
   * New right-click context menu on timeline items: *Roll Timeline Marker Here*,
     *Edit*, *Rename*, *Suppress*/*Unsuppress*, and *Delete*. Right-clicking no

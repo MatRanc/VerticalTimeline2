@@ -211,7 +211,15 @@ def get_feature_res(obj):
     fusionType = thomasa88lib.utils.short_class(entity)
     match = FEATURE_RESOURCE_MAP.get(fusionType)
     if callable(match):
-        match = match(obj)
+        try:
+            match = match(obj)
+        except Exception:
+            # Resolving the icon for some features digs deeper into the entity
+            # (e.g. ConstructionPlane reads .entity.definition). That can be
+            # None or inaccessible for default/origin planes and while a
+            # document is being torn down on close. Fall back to the
+            # placeholder icon instead of crashing the whole palette refresh.
+            match = None
     return match
 
 # Resolved icon paths are cached: the Fusion deploy folder and the bundled
@@ -393,8 +401,15 @@ def get_features_from_node(timeline_tree_node, component_parent_map):
             if entity:
                 feature['type'] = thomasa88lib.utils.short_class(obj.entity)
                 feature['image'] = get_feature_image(obj)
-                parents = get_feature_parent_path(component_parent_map,
-                                                  obj)
+                # Parent-path resolution dips into .parent / .parentComponent /
+                # .component on the live design, any of which can be missing or
+                # inaccessible for a feature that is mid-removal or while a
+                # document is closing. It is non-essential display metadata, so
+                # degrade to no parent path rather than crashing the refresh.
+                try:
+                    parents = get_feature_parent_path(component_parent_map, obj)
+                except Exception:
+                    parents = []
                 feature['parent-components'] = parents
                 if len(parents) > max_parents:
                     max_parents = len(parents)
@@ -413,11 +428,17 @@ def get_features_from_node(timeline_tree_node, component_parent_map):
                 # Fusion uses a space separator for the timeline object name, but sometimes the first part is empty.
                 # Strip the whitespace to make the list cleaner.
                 feature['name'] = feature['name'].lstrip()
-                if thomasa88lib.timeline.get_occurrence_type(obj) != OCCURRENCE_BODIES_COMP:
-                    # Name is a read-only instance variant of the component's name,
-                    # with a prefix on it.
-                    # Let the user modify the component's name instead
-                    feature['edit-name'] = obj.entity.component.name
+                try:
+                    if thomasa88lib.timeline.get_occurrence_type(obj) != OCCURRENCE_BODIES_COMP:
+                        # Name is a read-only instance variant of the component's name,
+                        # with a prefix on it.
+                        # Let the user modify the component's name instead
+                        feature['edit-name'] = obj.entity.component.name
+                except Exception:
+                    # The occurrence's component can be inaccessible mid-removal
+                    # or while a document is closing. The editable name is
+                    # optional, so just omit it rather than crashing the refresh.
+                    pass
 
         features.append(feature)
 
@@ -432,7 +453,12 @@ def get_feature_parent_path(component_parent_map, obj):
         if obj.isRolledBack or obj.isSuppressed:
             # No parent component will be available
             return []
-        parent_name = component_parent_map[feature.component.name]
+        # The map is rebuilt fresh from the live occurrence tree, but the
+        # timeline cache can still reference a component that is mid-removal
+        # (command_terminated fires while the component is gone but the
+        # timeline hasn't settled). Treat a missing component as no parent
+        # path, same as the while loop below handles a missing parent.
+        parent_name = component_parent_map.get(feature.component.name)
     elif feature_type == 'ConstructionPlane':
         if (feature.parent.classType() == 'adsk::fusion::Component' and
             feature.parent != design.rootComponent):
@@ -703,6 +729,19 @@ def palette_incoming_from_html_handler(args):
     action = htmlArgs.action
     data = json.loads(htmlArgs.data)
     html_commands = []
+
+    # Single-item actions operate on a cached timeline node referenced by id.
+    # That id comes from the last rendered palette; if the timeline changed
+    # underneath us before the click arrived (external edit, undo, document
+    # close), the id may no longer be in the freshly rebuilt cache. No-op the
+    # stale click instead of raising a KeyError that pops an error dialog -
+    # the palette refreshes itself anyway. The multi-item actions below already
+    # skip missing nodes via timeline_cache_map.get(i).
+    if action in ('setFeatureName', 'selectFeature', 'editFeature',
+                  'rollToFeature', 'suppressFeature', 'deleteFeature'):
+        if timeline_cache_map is None or data['id'] not in timeline_cache_map:
+            return
+
     if action == 'ready':
         print('HTML ready')
         html_ready = True
