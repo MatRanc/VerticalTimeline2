@@ -41,7 +41,8 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## TODO
 
-* Improve performance further for very large files.
+* Improve performance further for very large files. See
+  [PERFORMANCE.md](PERFORMANCE.md) for the prioritized backlog.
 
 ## Changelog
 
@@ -95,11 +96,6 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
     on every refresh.
   * Map *Move*/*Align* features so they get a proper icon and become editable
     on Fusion versions that expose their entity.
-* v 0.2.1
-  * Enable *Run on Startup* by default.
-* v 0.2.0
-  * Fix selection of features inside components/occurrences.
-  * Allow selection of rolled back and suppressed features.
 
 ## Credits
 
