@@ -1,1 +1,4 @@
 .* export-ignore
+# Keep the offline API reference tracked, but never ship it in release archives
+# (git archive / make-addin-release.sh both honor export-ignore).
+FusionAPI.chm export-ignore
