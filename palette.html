@@ -313,6 +313,18 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     // Icon file paths for the right-click menu, supplied by the add-in.
     var menuIcons = {};
 
+    // The add-in supplies a {light, dark} pair for every icon; pick the one that
+    // matches the palette's current theme (the same prefers-color-scheme signal
+    // the CSS uses). A plain string is already-resolved (the Edit row icon).
+    function isDark() {
+        return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    function pickIcon(icon) {
+        if (!icon) return null;
+        if (typeof icon === 'string') return icon;
+        return (isDark() && icon.dark) ? icon.dark : icon.light;
+    }
+
     // Ids of the currently selected rows (for multi-select / grouping) and the
     // last plain-clicked row (the anchor for Shift+click range selection).
     var selectedIds = new Set();
@@ -414,7 +426,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             listItem.title = `${healthPrefix}${titlePrefix}Right-click for options.`;
 
             let image = document.createElement('img');
-            image.src = feature['image'];
+            image.src = (isDark() && feature['imageDark']) ? feature['imageDark'] : feature['image'];
             image.classList.add('icon');
             listItem.appendChild(image);
 
@@ -757,10 +769,11 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
 
             // Icon column (an <img> when we have one, otherwise a spacer so all
             // labels line up).
-            let icon = document.createElement(entry.icon ? 'img' : 'span');
+            let iconSrc = pickIcon(entry.icon);
+            let icon = document.createElement(iconSrc ? 'img' : 'span');
             icon.className = 'context-menu-icon';
-            if (entry.icon) {
-                icon.src = entry.icon;
+            if (iconSrc) {
+                icon.src = iconSrc;
             }
             el.appendChild(icon);
 

@@ -201,33 +201,45 @@ SKETCH_FULLY_CONSTRAINED_RES = [
     'Neutron/UI/Base/Resources/Browser/FullyConstrainedSketch',                # Windows webdeploy
 ]
 
-def get_first_image_path(subpaths):
+def get_first_image_path(subpaths, dark=False):
     '''First of several candidate resource subpaths that exists, or None.'''
     for sub in subpaths:
-        path = get_image_path(sub)
+        path = get_image_path(sub, dark)
         if path:
             return path
     return None
 
 def get_feature_image(obj, entity=None, fusion_type=None):
+    '''(light, dark) icon paths so the palette can match its current theme.'''
     match = get_feature_res(obj, entity, fusion_type)
 
-    image = None
-    if match and match[0]:
-        # match[0] is usually a single resource subpath, but may be a list of
-        # candidates when the resource lives in a library whose layout differs
-        # between platforms (e.g. the Neutron browser icons).
-        if isinstance(match[0], (list, tuple)):
-            image = get_first_image_path(match[0])
-        else:
-            image = get_image_path(match[0])
+    def resolve(dark):
+        image = None
+        if match and match[0]:
+            # match[0] is usually a single resource subpath, but may be a list of
+            # candidates when the resource lives in a library whose layout differs
+            # between platforms (e.g. the Neutron browser icons).
+            if isinstance(match[0], (list, tuple)):
+                image = get_first_image_path(match[0], dark)
+            else:
+                image = get_image_path(match[0], dark)
+        if not image:
+            # Image not mapped, or the mapped resource does not exist in this
+            # Fusion version. Fall back to a generic placeholder.
+            image = get_image_path(UNKNOWN_FEATURE_IMAGE, dark)
+        return image
 
-    if not image:
-        # Image not mapped, or the mapped resource does not exist in this
-        # Fusion version. Fall back to a generic placeholder.
-        image = get_image_path(UNKNOWN_FEATURE_IMAGE)
+    return resolve(False), resolve(True)
 
-    return image
+def set_feature_image(feature, subpath_or_list):
+    '''Set feature['image'] (light) and ['imageDark'] from a resource subpath or
+    candidate list, so the palette can pick the one matching its theme.'''
+    if isinstance(subpath_or_list, (list, tuple)):
+        feature['image'] = get_first_image_path(subpath_or_list, False)
+        feature['imageDark'] = get_first_image_path(subpath_or_list, True)
+    else:
+        feature['image'] = get_image_path(subpath_or_list, False)
+        feature['imageDark'] = get_image_path(subpath_or_list, True)
 
 def get_feature_edit_command_id(obj):
     match = get_feature_res(obj)
@@ -266,26 +278,37 @@ def get_feature_res(obj, entity=None, fusion_type=None):
 # resource files do not change during a session, so there is no need to hit the
 # filesystem (os.path.exists) once per feature on every timeline refresh.
 _image_path_cache = {}
-def get_image_path(subpath):
-    if subpath in _image_path_cache:
-        return _image_path_cache[subpath]
+def get_image_path(subpath, dark=False):
+    key = (subpath, dark)
+    if key in _image_path_cache:
+        return _image_path_cache[key]
 
     base = f'{thomasa88lib.utils.get_fusion_deploy_folder()}/{subpath}'
-    # Newer Fusion ships some browser icons as SVG only, split by theme. Prefer
-    # the theme-neutral PNG (what nearly every icon still is), then the dark SVG
-    # (the palette and Fusion default to dark), then the light SVG.
-    # ponytail: dark-first mistones SVG-only icons in light mode; thread the
-    # palette theme through here if that ever matters.
+    # Icons render in a 16px box but on Retina that needs a 32px source or it
+    # looks soft, so prefer the 2x raster (16x16@2x.png, or 32x32.png where a
+    # folder names it that way), falling back to the plain 16px PNG, then SVG.
+    # Fusion ships theme-split assets: the neutral files have a dark foreground
+    # (right on a light palette) and the "-dark" files a light foreground (right
+    # on a dark palette). The palette is theme-adaptive, so the caller asks for
+    # whichever the palette is currently rendering. The dark set falls back to
+    # the neutral set for the many icons that ship no "-dark" variant.
+    neutral = ('16x16@2x.png', '32x32.png', '16x16.png', '16x16.svg',
+               '16x16-dark.svg')
+    if dark:
+        names = ('16x16-dark@2x.png', '32x32-dark.png', '16x16-dark.png',
+                 '16x16-dark.svg') + neutral
+    else:
+        names = neutral
     result = None
-    for name in ('16x16.png', '16x16-dark.svg', '16x16.svg'):
+    for name in names:
         path = f'{base}/{name}'
         if os.path.exists(path):
             result = path
             break
     if result is None:
-        print(f'File does not exist: {base}/16x16.png')
+        print(f'File does not exist: {base}/{names[0]}')
 
-    _image_path_cache[subpath] = result
+    _image_path_cache[key] = result
     return result
 
 # Icons for the palette right-click menu, taken from Fusion's own command
@@ -300,28 +323,38 @@ def get_menu_icons():
 
     icons = {}
 
+    # Each value is a {'light', 'dark'} pair (theme-split, like the row icons) so
+    # the palette can pick the variant matching its current theme.
+    def pair(subpath):
+        light = get_image_path(subpath, False)
+        if not light:
+            return None
+        return {'light': light, 'dark': get_image_path(subpath, True) or light}
+
     # Roll: the exact "Roll Timeline Marker Here" glyph (Fusion's FusionRollCommand)
     # is drawn by the timeline control and isn't shipped as a resource file, so we
     # bundle a transparent recreation of it. Fall back to Fusion's roll-forward
     # timeline icon if the bundled file is missing.
     roll_icon = os.path.join(FILE_DIR, 'resources', 'roll-marker.png')
-    if not os.path.exists(roll_icon):
-        roll_icon = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/RollFwd')
-    if roll_icon:
-        icons['rollToFeature'] = roll_icon
+    if os.path.exists(roll_icon):
+        icons['rollToFeature'] = {'light': roll_icon, 'dark': roll_icon}
+    else:
+        roll_pair = pair('Fusion/UI/FusionUI/Resources/Timeline/RollFwd')
+        if roll_pair:
+            icons['rollToFeature'] = roll_pair
 
     # Delete: Fusion's own modify-panel red X. (Previously this borrowed the live
     # DeleteCommand's resourceFolder, which stopped resolving and left the menu
     # entry icon-less; this stable subpath ships a plain 16x16.png and resolves on
     # both macOS and Windows.) See docs/ICONS.md for the resource-tree layout.
-    delete_icon = get_image_path('Fusion/UI/FusionUI/Resources/modify/delete')
-    if delete_icon:
-        icons['deleteFeature'] = delete_icon
+    delete_pair = pair('Fusion/UI/FusionUI/Resources/modify/delete')
+    if delete_pair:
+        icons['deleteFeature'] = delete_pair
 
     # Create Group: Fusion's timeline group icon.
-    group_icon = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/GroupFeature')
-    if group_icon:
-        icons['createGroup'] = group_icon
+    group_pair = pair('Fusion/UI/FusionUI/Resources/Timeline/GroupFeature')
+    if group_pair:
+        icons['createGroup'] = group_pair
 
     # Suppress and Rename intentionally have no icon - this matches Fusion's
     # native timeline menu, and the only on-disk suppress icons are joint /
@@ -454,7 +487,7 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
         if child_node.children:
             # Group
             feature['type'] = 'GROUP'
-            feature['image'] = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/GroupFeature')
+            set_feature_image(feature, 'Fusion/UI/FusionUI/Resources/Timeline/GroupFeature')
             feature['children'], group_max_parents = get_features_from_node(child_node,
                                                                             component_parent_map,
                                                                             design)
@@ -480,7 +513,7 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                 except Exception:
                     pass
 
-                feature['image'] = get_feature_image(obj, entity, feature_type)
+                feature['image'], feature['imageDark'] = get_feature_image(obj, entity, feature_type)
                 # Parent-path resolution dips into .parent / .parentComponent /
                 # .component on the live design, any of which can be missing or
                 # inaccessible for a feature that is mid-removal or while a
@@ -500,9 +533,8 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                 if feature_type == 'Sketch':
                     try:
                         if entity.isFullyConstrained:
-                            constrained_icon = get_first_image_path(SKETCH_FULLY_CONSTRAINED_RES)
-                            if constrained_icon:
-                                feature['image'] = constrained_icon
+                            if get_first_image_path(SKETCH_FULLY_CONSTRAINED_RES):
+                                set_feature_image(feature, SKETCH_FULLY_CONSTRAINED_RES)
                     except Exception:
                         pass
             else:
@@ -511,10 +543,10 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
 
                 if obj.name.startswith('Derived from '):
                     feature['type'] = 'InsertDerive'
-                    feature['image'] = get_image_path('Fusion/UI/FusionUI/Resources/Derive/CloneWM')
+                    set_feature_image(feature, 'Fusion/UI/FusionUI/Resources/Derive/CloneWM')
                 else:
                     feature['type'] = '? (Feature info access prohibited by Fusion 360)'
-                    feature['image'] = get_image_path('Fusion/UI/FusionUI/Resources/TSpline/Error')
+                    set_feature_image(feature, 'Fusion/UI/FusionUI/Resources/TSpline/Error')
 
             if feature['type'] == 'Occurrence':
                 # Fusion uses a space separator for the timeline object name, but sometimes the first part is empty.

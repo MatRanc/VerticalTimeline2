@@ -55,6 +55,12 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.7.2
+  * Browser icons load Fusion's high-resolution (2x) artwork, so they are crisp
+    on Retina/HiDPI displays instead of blurry.
+  * Icons now follow the palette's light/dark theme: each icon uses Fusion's
+    light-foreground (`-dark`) artwork on a dark palette and the normal artwork
+    on a light palette, so details like the extrude arrow stay visible either way.
 * v 0.7.1
   * The right-click *Delete* and *Delete all features after History Marker* items
     show the red Delete icon again.
