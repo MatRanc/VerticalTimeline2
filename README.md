@@ -51,6 +51,16 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.6.0
+  * Fixed group collapse: only the last group's collapse toggle used to work.
+  * Rolled-back items now offer *Delete all features after History Marker* in
+    the right-click menu.
+  * Double-click the name to rename; double-click elsewhere on the row to edit.
+    A single click now selects (and selects the feature in the Fusion GUI too).
+  * Multi-selected rows are pushed to Fusion as a real selection, so commands
+    such as *Mirror* can consume the picked features.
+  * Errored/warned items are highlighted red/yellow, with the message on hover.
+  * Fixed a crash when selecting a position Snapshot.
 * v 0.5.0
   * Performance: highlighting the timeline row for the feature selected in the
     GUI is now a direct lookup instead of scanning every timeline item on each
