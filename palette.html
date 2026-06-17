@@ -241,6 +241,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 position: fixed;
                 z-index: 1000;
                 min-width: 170px;
+                max-width: 260px;
                 padding: 4px 0;
                 background-color: var(--menu-bg);
                 color: var(--fg);
@@ -254,16 +255,17 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             }
             .context-menu-item {
                 display: flex;
-                align-items: center;
+                align-items: flex-start;
                 gap: 8px;
                 padding: 4px 14px;
-                white-space: nowrap;
+                white-space: normal;
                 cursor: default;
             }
             .context-menu-icon {
                 width: 16px;
                 height: 16px;
                 flex: 0 0 16px;
+                margin-top: 1px;
             }
             .context-menu-item:hover {
                 background-color: var(--hover-bg);

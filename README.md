@@ -55,6 +55,15 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.7.1
+  * The right-click *Delete* and *Delete all features after History Marker* items
+    show the red Delete icon again.
+  * *Roll Timeline Marker Here* now shows its proper timeline-marker glyph instead
+    of the roll-forward arrow.
+  * Long context-menu items (e.g. *Delete all features after History Marker*) wrap
+    instead of stretching the menu across the whole panel.
+  * Added [docs/ICONS.md](docs/ICONS.md) documenting how Fusion's icon resources
+    are resolved (the Fusion vs Neutron trees and the macOS/Windows path split).
 * v 0.7.0
   * Draggable history-marker bar: drag the marker (the silver line with the grip
     on the right, between the active and rolled-back items) onto a row to roll

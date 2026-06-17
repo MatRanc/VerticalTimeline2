@@ -194,6 +194,7 @@ UNKNOWN_FEATURE_IMAGE = 'Fusion/UI/FusionUI/Resources/finish/finishX'
 # badge). It lives in the Neutron library, whose location relative to the deploy
 # folder differs between the macOS app bundle and the Windows webdeploy, so try
 # both. Resolves to None (-> plain sketch icon) if neither layout matches.
+# See docs/ICONS.md for the macOS/Windows Neutron path split.
 # ponytail: two known layouts; add another candidate if a future layout misses.
 SKETCH_FULLY_CONSTRAINED_RES = [
     '../../Neutron/Neutron/UI/Base/Resources/Browser/FullyConstrainedSketch',  # macOS bundle
@@ -257,6 +258,10 @@ def get_feature_res(obj, entity=None, fusion_type=None):
             match = None
     return match
 
+# How Fusion lays out its icon resources (deploy folder, the Fusion vs Neutron
+# trees, the macOS app-bundle vs Windows webdeploy split, and theme-split
+# filenames like 16x16-dark.png) is documented in docs/ICONS.md.
+#
 # Resolved icon paths are cached: the Fusion deploy folder and the bundled
 # resource files do not change during a session, so there is no need to hit the
 # filesystem (os.path.exists) once per feature on every timeline refresh.
@@ -295,24 +300,23 @@ def get_menu_icons():
 
     icons = {}
 
-    # Roll: the exact "Roll Timeline Marker Here" glyph is drawn internally by
-    # the timeline control and is not a resource file, so use Fusion's genuine
-    # roll-forward timeline icon (a marker bar + arrow) instead.
-    roll_icon = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/RollFwd')
+    # Roll: the exact "Roll Timeline Marker Here" glyph (Fusion's FusionRollCommand)
+    # is drawn by the timeline control and isn't shipped as a resource file, so we
+    # bundle a transparent recreation of it. Fall back to Fusion's roll-forward
+    # timeline icon if the bundled file is missing.
+    roll_icon = os.path.join(FILE_DIR, 'resources', 'roll-marker.png')
+    if not os.path.exists(roll_icon):
+        roll_icon = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/RollFwd')
     if roll_icon:
         icons['rollToFeature'] = roll_icon
 
-    # Delete: borrow the icon from Fusion's own Delete command (the red X).
-    delete_cmd = ui.commandDefinitions.itemById('DeleteCommand')
-    if delete_cmd:
-        try:
-            folder = delete_cmd.resourceFolder
-        except (RuntimeError, AttributeError):
-            folder = None
-        if folder:
-            path = f'{folder}/16x16.png'
-            if os.path.exists(path):
-                icons['deleteFeature'] = path
+    # Delete: Fusion's own modify-panel red X. (Previously this borrowed the live
+    # DeleteCommand's resourceFolder, which stopped resolving and left the menu
+    # entry icon-less; this stable subpath ships a plain 16x16.png and resolves on
+    # both macOS and Windows.) See docs/ICONS.md for the resource-tree layout.
+    delete_icon = get_image_path('Fusion/UI/FusionUI/Resources/modify/delete')
+    if delete_icon:
+        icons['deleteFeature'] = delete_icon
 
     # Create Group: Fusion's timeline group icon.
     group_icon = get_image_path('Fusion/UI/FusionUI/Resources/Timeline/GroupFeature')
