@@ -34,6 +34,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 --menu-bg: #ffffff;
                 --menu-border: #c0c0c0;
                 --danger-fg: #c0392b;
+                --health-error: #c0392b;
+                --health-warning: #b8860b;
             }
             @media (prefers-color-scheme: dark) {
                 :root {
@@ -50,6 +52,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     --menu-bg: #3a3a3a;
                     --menu-border: #555555;
                     --danger-fg: #e57373;
+                    --health-error: #e57373;
+                    --health-warning: #d4a72c;
                 }
             }
             body {
@@ -144,6 +148,24 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             }
             .suppressed {
                 opacity: 0.5;
+            }
+            /* Health indicator: a colored left bar plus colored name text for
+               features Fusion reports as errored/warning. padding-left is
+               trimmed by the bar width so row content stays aligned. */
+            .feature.health-error, .feature.health-warning {
+                padding-left: 2px;
+            }
+            .feature.health-error {
+                border-left: 3px solid var(--health-error);
+            }
+            .feature.health-warning {
+                border-left: 3px solid var(--health-warning);
+            }
+            .feature.health-error .name {
+                color: var(--health-error);
+            }
+            .feature.health-warning .name {
+                color: var(--health-warning);
             }
             ul {
                 padding-left: 0px;
@@ -299,6 +321,12 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             if (feature.suppressed) {
                 listItem.setAttribute('data-suppressed', '1');
             }
+            if (feature.rolledBack) {
+                listItem.setAttribute('data-rolled-back', '1');
+            }
+            if (feature.health) {
+                listItem.classList.add('health-' + feature.health);
+            }
 
             listItem.addEventListener('click', onFeatureClick);
             listItem.addEventListener('dblclick', onFeatureDoubleClick);
@@ -321,7 +349,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 }
                 addParentBars(listItem, feature, maxParents);
             }
-            listItem.title = `${titlePrefix}Right-click for options.`;
+            let healthPrefix = feature['health-message'] ? feature['health-message'] + '\n\n' : '';
+            listItem.title = `${healthPrefix}${titlePrefix}Right-click for options.`;
 
             let image = document.createElement('img');
             image.src = feature['image'];
@@ -350,7 +379,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 listItem.classList.add('feature-group-header');
                 listItem.title = 'Group';
 
-                groupList = appendItems(list, feature.children, maxParents, true);
+                let groupList = appendItems(list, feature.children, maxParents, true);
                 groupToggle.addEventListener('click', () => {
                     let collapse = !collapsedGroups.has(feature.name);
                     if (collapse) {
@@ -438,6 +467,11 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         if (!item) {
             return;
         }
+        // While actively editing this row's name, let clicks place the caret
+        // instead of re-selecting the row.
+        if (e.target.classList.contains('name') && e.target === document.activeElement) {
+            return;
+        }
         let id = parseInt(item.getAttribute('data-id'));
 
         if (e.metaKey || e.ctrlKey) {
@@ -449,19 +483,19 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             }
             lastClickedId = id;
             applySelection();
+            selectFeaturesGui();
             return;
         }
         if (e.shiftKey) {
             // Select the contiguous range from the anchor to this row.
             selectRange(lastClickedId, id);
             applySelection();
+            selectFeaturesGui();
             return;
         }
-        // A plain click on the name edits it (handled by the name element); a
-        // plain click anywhere else selects just this row.
-        if (e.target.classList.contains('name')) {
-            return;
-        }
+        // A plain click selects just this row. Renaming is now a double-click on
+        // the name (or the context-menu Rename item), so clicking the name
+        // selects too instead of dropping straight into edit mode.
         selectedIds = new Set([id]);
         lastClickedId = id;
         applySelection();
@@ -473,11 +507,20 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         processCommands(ret);
     }
 
-    // Hold a modifier when clicking a name to (de)select the row instead of
-    // editing it. preventDefault stops the contentEditable from taking focus;
-    // the click then reaches onFeatureClick, which handles the selection.
+    // Push the whole multi-selection to Fusion as a real selection, so commands
+    // like Mirror can consume the rows picked here (not just highlight them).
+    async function selectFeaturesGui() {
+        let ret = await query('selectFeatures', { 'ids': Array.from(selectedIds) });
+        processCommands(ret);
+    }
+
+    // Keep a single click from dropping an editing caret into the name. While
+    // the name is not yet being edited, preventDefault stops the contentEditable
+    // from taking focus, so the click reaches onFeatureClick and selects the row
+    // instead. Editing is entered via double-click / the Rename menu (which call
+    // startRename → focus); once focused, allow normal caret placement.
     function onFeatureNameMouseDown(e) {
-        if (e.metaKey || e.ctrlKey || e.shiftKey) {
+        if (e.target !== document.activeElement) {
             e.preventDefault();
         }
     }
@@ -521,7 +564,15 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
 
     async function onFeatureDoubleClick(e) {
         let item = e.target.closest('.feature');
-
+        if (!item) {
+            return;
+        }
+        // Double-click the name to edit the name; double-click anywhere else on
+        // the row to edit the feature/part.
+        if (e.target.classList.contains('name')) {
+            startRename(item);
+            return;
+        }
         let ret = await query('editFeature', { 'id': parseInt(item.getAttribute('data-id')) } );
         processCommands(ret);
     }
@@ -623,6 +674,12 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             entries.push({ separator: true });
             entries.push({ label: 'Delete', danger: true, icon: menuIcons['deleteFeature'],
                            run: () => sendFeatureAction('deleteFeature', id) });
+            // Only meaningful for a row past the history marker (rolled back).
+            if (item.getAttribute('data-rolled-back') === '1') {
+                entries.push({ label: 'Delete all features after History Marker',
+                               danger: true, icon: menuIcons['deleteFeature'],
+                               run: () => send('deleteAllAfterMarker') });
+            }
         }
 
         for (let entry of entries) {

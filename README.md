@@ -21,16 +21,21 @@ Once installed, turn the timeline on with *File* -> *View* -> *Toggle Vertical T
 
 The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
 
-* Click an item to select it.
-* Double-click on an item to edit it.
-* Click on an item text to rename it.
+* Click an item to select it (this also selects it in the Fusion GUI).
+* Double-click the name to rename it; double-click anywhere else on the row to
+  edit the feature/part.
 * Right-click an item for a context menu: *Roll Timeline Marker Here*, *Edit*,
-  *Rename*, *Suppress*/*Unsuppress*, and *Delete*.
-* *Cmd*/*Ctrl*-click (or *Shift*-click for a range) to select multiple items,
-  then right-click to *Create Group* or *Suppress*/*Delete* them together.
+  *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an item past the history
+  marker (rolled back), the menu also offers *Delete all features after History
+  Marker*.
+* *Cmd*/*Ctrl*-click (or *Shift*-click for a range) to select multiple items.
+  The selection is pushed to Fusion as a real selection, so you can then run a
+  command such as *Mirror* on those features. Right-click to *Create Group* or
+  *Suppress*/*Delete* them together.
 
 Selecting a feature in the Fusion GUI also highlights the matching row in the
-timeline.
+timeline. Items that Fusion reports as errored or warned are highlighted red or
+yellow, with the message shown on hover.
 
 The palette shows its own context menu rather than Fusion's native timeline
 menu. Some native entries — *Create Selection Set*, *Configure*, *Find in

@@ -393,6 +393,21 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
             'rolledBack': obj.isRolledBack,
             }
 
+        # Health: surface error/warning state so the palette can highlight the
+        # row (red/yellow). healthState lives on the timeline object itself (no
+        # entity round-trip) and is Unknown for groups/snapshots. Best-effort:
+        # never let it break the refresh while a document is tearing down.
+        try:
+            health = obj.healthState
+            if health == adsk.fusion.FeatureHealthStates.ErrorFeatureHealthState:
+                feature['health'] = 'error'
+                feature['health-message'] = obj.errorOrWarningMessage or ''
+            elif health == adsk.fusion.FeatureHealthStates.WarningFeatureHealthState:
+                feature['health'] = 'warning'
+                feature['health-message'] = obj.errorOrWarningMessage or ''
+        except Exception:
+            pass
+
         # Might there be empty groups?
         if child_node.children:
             # Group
@@ -750,7 +765,50 @@ def toggle_palette_command_created_handler(args):
 def palette_closed_handler(args):
     set_enabled(False)
 
-# Event handler for the palette HTML event.                
+def add_entity_to_collection(newSelection, entity, design):
+    '''Add a timeline feature's entity (with its assembly-context proxies) to a
+    selection collection. Returns True if the feature proxy itself was added (so
+    it can be edited), False if only its produced bodies were added (a fallback
+    that allows highlighting but not editing).'''
+    if isinstance(entity, adsk.fusion.Occurrence):
+        associated_component = entity.sourceComponent
+    elif isinstance(entity, adsk.fusion.ConstructionPlane):
+        associated_component = entity.parent
+    elif hasattr(entity, 'parentComponent'):
+        associated_component = entity.parentComponent
+    else:
+        # Some timeline entities (e.g. a position Snapshot / "capture position")
+        # have no component and cannot be selected in the viewport. Add nothing;
+        # callers treat an empty collection as "not selectable".
+        return True
+
+    if associated_component == design.rootComponent:
+        # There are no occurrences of root - just the single root instance.
+        # The entity can be selected directly.
+        newSelection.add(entity)
+        return True
+
+    # The entity lives inside a component that may be instanced several times.
+    # Select it in every occurrence context (allOccurrencesByComponent also
+    # reaches nested occurrences).
+    in_occurrences = design.rootComponent.allOccurrencesByComponent(associated_component)
+    if hasattr(entity, 'createForAssemblyContext'):
+        # Features, sketches, planes and occurrences support assembly-context
+        # proxies. Selecting the feature proxy - not just its bodies - is what
+        # lets the edit command operate on the feature.
+        for occurrence in in_occurrences:
+            newSelection.add(entity.createForAssemblyContext(occurrence))
+        return True
+    elif hasattr(entity, 'bodies'):
+        # Fallback for entities with no assembly-context proxy: select the
+        # produced bodies. The feature itself cannot be edited this way.
+        for body in entity.bodies:
+            for occurrence in in_occurrences:
+                newSelection.add(body.createForAssemblyContext(occurrence))
+        return False
+    return True
+
+# Event handler for the palette HTML event.
 def palette_incoming_from_html_handler(args):
     global html_ready
     htmlArgs = adsk.core.HTMLEventArgs.cast(args)
@@ -827,64 +885,66 @@ def palette_incoming_from_html_handler(args):
             # is not cleared if the entity turns out to be unselectable.
             newSelection = adsk.core.ObjectCollection.create()
 
-            # Whether the selected entity can be edited. Selecting only the produced
-            # bodies (the fallback below) allows highlighting but not editing.
-            editable = True
+            # add_entity_to_collection returns whether the feature itself was
+            # added (editable) or only its produced bodies (highlight-only).
+            editable = add_entity_to_collection(newSelection, entity, design)
 
-            if isinstance(entity, adsk.fusion.Occurrence):
-                associated_component = entity.sourceComponent
-            elif isinstance(entity, adsk.fusion.ConstructionPlane):
-                associated_component = entity.parent
-            else:
-                associated_component = entity.parentComponent
-
-            if associated_component == design.rootComponent:
-                # There are no occurrences of root - just the single root instance.
-                # The entity can be selected directly.
-                newSelection.add(entity)
-            else:
-                # The entity lives inside a component that may be instanced several
-                # times. Select it in every occurrence context (uses
-                # allOccurrencesByComponent to also reach nested occurrences).
-                in_occurrences = design.rootComponent.allOccurrencesByComponent(associated_component)
-                if hasattr(entity, 'createForAssemblyContext'):
-                    # Features (Box, Cylinder, Extrude, ...), sketches, planes and
-                    # occurrences all support assembly-context proxies. Selecting the
-                    # feature proxy itself - rather than just the bodies it produced -
-                    # is what lets the edit command operate on the feature.
-                    for occurrence in in_occurrences:
-                        newSelection.add(entity.createForAssemblyContext(occurrence))
-                elif hasattr(entity, 'bodies'):
-                    # Fallback for entities that do not expose an assembly-context
-                    # proxy: select the produced bodies. The feature itself cannot be
-                    # edited this way.
-                    editable = False
-                    for body in entity.bodies:
-                        for occurrence in in_occurrences:
-                            newSelection.add(body.createForAssemblyContext(occurrence))
-
-            try:
-                ui.activeSelections.all = newSelection
-            except Exception as e:
-                html_commands.append(report_message(
-                    f'Failed to select {thomasa88lib.utils.short_class(entity)}: {e}'))
-                ret = False
-
-            if ret and action == 'editFeature':
-                command_id = get_feature_edit_command_id(obj)
-                if not editable:
+            if newSelection.count == 0:
+                # Nothing selectable (e.g. a position Snapshot, or a feature with
+                # no produced bodies). Leave the current selection untouched;
+                # only report when an edit was explicitly requested.
+                if action == 'editFeature':
                     html_commands.append(report_message(
-                        f'Editing {thomasa88lib.utils.short_class(entity)} inside a '
-                        'component is not supported.'))
+                        'This timeline item cannot be selected or edited.'))
                     ret = False
-                elif command_id:
-                    ui.commandDefinitions.itemById(command_id).execute()
-                else:
+            else:
+                try:
+                    ui.activeSelections.all = newSelection
+                except Exception as e:
                     html_commands.append(report_message(
-                        f'Editing {thomasa88lib.utils.short_class(entity)} feature is not supported.'))
+                        f'Failed to select {thomasa88lib.utils.short_class(entity)}: {e}'))
                     ret = False
+
+                if ret and action == 'editFeature':
+                    command_id = get_feature_edit_command_id(obj)
+                    if not editable:
+                        html_commands.append(report_message(
+                            f'Editing {thomasa88lib.utils.short_class(entity)} inside a '
+                            'component is not supported.'))
+                        ret = False
+                    elif command_id:
+                        ui.commandDefinitions.itemById(command_id).execute()
+                    else:
+                        html_commands.append(report_message(
+                            f'Editing {thomasa88lib.utils.short_class(entity)} feature is not supported.'))
+                        ret = False
 
         html_commands.append(ret)
+    elif action == 'selectFeatures':
+        # Push a real multi-entity Fusion selection (so commands like Mirror can
+        # consume the rows picked here), not just the palette's row highlight.
+        design = app.activeProduct
+        newSelection = adsk.core.ObjectCollection.create()
+        for i in data.get('ids', []):
+            node = timeline_cache_map.get(i)
+            if not node or node.obj is None:
+                continue
+            try:
+                entity = node.obj.entity
+            except RuntimeError:
+                entity = None
+            if entity is None:
+                continue
+            try:
+                add_entity_to_collection(newSelection, entity, design)
+            except Exception:
+                # Skip anything that can't be resolved; selecting the rest is
+                # better than failing the whole pick.
+                pass
+        try:
+            ui.activeSelections.all = newSelection
+        except Exception as e:
+            html_commands.append(report_message(f'Failed to select items: {e}'))
     elif action == 'rollToFeature':
         node = timeline_cache_map[data['id']]
         obj = node.obj
@@ -930,6 +990,17 @@ def palette_incoming_from_html_handler(args):
             html_commands.append(report_message(
                 f'Could not delete this {type_name} '
                 '(it may be needed by later features).'))
+        html_commands.append(invalidate(send=False))
+    elif action == 'deleteAllAfterMarker':
+        # Mirrors Fusion's native "Delete all features after History Marker"
+        # (offered when right-clicking a rolled-back row).
+        timeline_status, timeline = thomasa88lib.timeline.get_timeline()
+        if timeline_status == TIMELINE_STATUS_OK:
+            try:
+                timeline.deleteAllAfterMarker()
+            except (RuntimeError, AttributeError):
+                html_commands.append(report_message(
+                    'Could not delete the features after the marker.'))
         html_commands.append(invalidate(send=False))
     elif action == 'createGroup':
         # Fusion groups are a contiguous timeline range, so group everything
