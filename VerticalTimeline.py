@@ -81,7 +81,13 @@ TIMELINE_STATUS_NOT_PARAMETRIC = 2
 OCCURRENCE_RESOURCE_MAP = {
     OCCURRENCE_NEW_COMP: ('Fusion/UI/FusionUI/Resources/Modeling/BooleanNewComponent', ''),
     OCCURRENCE_COPY_COMP: ('Fusion/UI/FusionUI/Resources/Assembly/CopyPasteInstance', ''),
-    OCCURRENCE_SHEET_METAL: ('Neutron/UI/Base/Resources/Browser/ComponentSheetMetal', ''),
+    # Neutron browser icon, renamed from the old ComponentSheetMetal. Its path
+    # relative to the deploy folder differs between macOS and Windows, so list
+    # both layouts (first that exists wins).
+    OCCURRENCE_SHEET_METAL: ([
+        '../../Neutron/Neutron/UI/Base/Resources/Browser/SheetMetalComponent',  # macOS bundle
+        'Neutron/UI/Base/Resources/Browser/SheetMetalComponent',                # Windows webdeploy
+    ], ''),
     #'FusionCreateComponentFromBodyEditCommand' seems to actually create a new component
     OCCURRENCE_BODIES_COMP: ('Fusion/UI/FusionUI/Resources/Assembly/CreateComponentFromBody', ''),
     OCCURRENCE_UNKNOWN_COMP: ('Fusion/UI/FusionUI/Resources/finish/finishX', '')
@@ -184,12 +190,36 @@ FEATURE_RESOURCE_MAP = {
 
 UNKNOWN_FEATURE_IMAGE = 'Fusion/UI/FusionUI/Resources/finish/finishX'
 
+# Fusion's "fully constrained sketch" browser icon (the sketch glyph with a lock
+# badge). It lives in the Neutron library, whose location relative to the deploy
+# folder differs between the macOS app bundle and the Windows webdeploy, so try
+# both. Resolves to None (-> plain sketch icon) if neither layout matches.
+# ponytail: two known layouts; add another candidate if a future layout misses.
+SKETCH_FULLY_CONSTRAINED_RES = [
+    '../../Neutron/Neutron/UI/Base/Resources/Browser/FullyConstrainedSketch',  # macOS bundle
+    'Neutron/UI/Base/Resources/Browser/FullyConstrainedSketch',                # Windows webdeploy
+]
+
+def get_first_image_path(subpaths):
+    '''First of several candidate resource subpaths that exists, or None.'''
+    for sub in subpaths:
+        path = get_image_path(sub)
+        if path:
+            return path
+    return None
+
 def get_feature_image(obj, entity=None, fusion_type=None):
     match = get_feature_res(obj, entity, fusion_type)
 
     image = None
     if match and match[0]:
-        image = get_image_path(match[0])
+        # match[0] is usually a single resource subpath, but may be a list of
+        # candidates when the resource lives in a library whose layout differs
+        # between platforms (e.g. the Neutron browser icons).
+        if isinstance(match[0], (list, tuple)):
+            image = get_first_image_path(match[0])
+        else:
+            image = get_image_path(match[0])
 
     if not image:
         # Image not mapped, or the mapped resource does not exist in this
@@ -235,12 +265,20 @@ def get_image_path(subpath):
     if subpath in _image_path_cache:
         return _image_path_cache[subpath]
 
-    path = f'{thomasa88lib.utils.get_fusion_deploy_folder()}/{subpath}/16x16.png'
-    if os.path.exists(path):
-        result = path
-    else:
-        print(f'File does not exist: {path}')
-        result = None
+    base = f'{thomasa88lib.utils.get_fusion_deploy_folder()}/{subpath}'
+    # Newer Fusion ships some browser icons as SVG only, split by theme. Prefer
+    # the theme-neutral PNG (what nearly every icon still is), then the dark SVG
+    # (the palette and Fusion default to dark), then the light SVG.
+    # ponytail: dark-first mistones SVG-only icons in light mode; thread the
+    # palette theme through here if that ever matters.
+    result = None
+    for name in ('16x16.png', '16x16-dark.svg', '16x16.svg'):
+        path = f'{base}/{name}'
+        if os.path.exists(path):
+            result = path
+            break
+    if result is None:
+        print(f'File does not exist: {base}/16x16.png')
 
     _image_path_cache[subpath] = result
     return result
@@ -452,6 +490,17 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                 feature['parent-components'] = parents
                 if len(parents) > max_parents:
                     max_parents = len(parents)
+
+                # Fully constrained sketches get Fusion's own lock-badge icon
+                # (matching the browser), instead of the plain sketch icon.
+                if feature_type == 'Sketch':
+                    try:
+                        if entity.isFullyConstrained:
+                            constrained_icon = get_first_image_path(SKETCH_FULLY_CONSTRAINED_RES)
+                            if constrained_icon:
+                                feature['image'] = constrained_icon
+                    except Exception:
+                        pass
             else:
                 # Move and Align and more does not allow us to access their entity attribute
                 # Bug: https://forums.autodesk.com/t5/fusion-360-api-and-scripts/api-bug-cannot-access-entity-of-quot-move-quot-feature/m-p/9651921
@@ -808,6 +857,21 @@ def add_entity_to_collection(newSelection, entity, design):
         return False
     return True
 
+def get_translucent_bodies(entity):
+    '''Bodies whose opacity the translucency toggle flips. Occurrences have no
+    settable opacity, so fall through to their component's bodies.'''
+    if isinstance(entity, adsk.fusion.BRepBody):
+        return [entity]
+    if isinstance(entity, adsk.fusion.Occurrence):
+        return list(entity.component.bRepBodies)
+    bodies = getattr(entity, 'bodies', None)
+    if bodies and bodies.count:
+        return list(bodies)
+    parent = getattr(entity, 'parentComponent', None)
+    if parent:
+        return list(parent.bRepBodies)
+    return []
+
 # Event handler for the palette HTML event.
 def palette_incoming_from_html_handler(args):
     global html_ready
@@ -824,7 +888,8 @@ def palette_incoming_from_html_handler(args):
     # the palette refreshes itself anyway. The multi-item actions below already
     # skip missing nodes via timeline_cache_map.get(i).
     if action in ('setFeatureName', 'selectFeature', 'editFeature',
-                  'rollToFeature', 'suppressFeature', 'deleteFeature'):
+                  'rollToFeature', 'suppressFeature', 'deleteFeature',
+                  'toggleTranslucent'):
         if timeline_cache_map is None or data['id'] not in timeline_cache_map:
             return
 
@@ -958,6 +1023,35 @@ def palette_incoming_from_html_handler(args):
             obj = obj.parentGroup
         html_commands.append(obj.rollTo(False))
         html_commands.append(invalidate(send=False))
+    elif action == 'toggleTranslucent':
+        node = timeline_cache_map[data['id']]
+        obj = node.obj
+        try:
+            entity = obj.entity
+        except RuntimeError:
+            entity = None
+        bodies = []
+        if entity is not None:
+            try:
+                bodies = get_translucent_bodies(entity)
+            except Exception:
+                bodies = []
+        if not bodies:
+            html_commands.append(report_message(
+                'This item has no body to make translucent.'))
+        else:
+            # Flip: if anything is already translucent, restore all to opaque;
+            # otherwise make them 50% translucent.
+            try:
+                make_opaque = any(b.opacity < 0.99 for b in bodies)
+            except (RuntimeError, AttributeError):
+                make_opaque = False
+            new_opacity = 1.0 if make_opaque else 0.5
+            for b in bodies:
+                try:
+                    b.opacity = new_opacity
+                except (RuntimeError, AttributeError):
+                    pass
     elif action == 'suppressFeature':
         node = timeline_cache_map[data['id']]
         obj = node.obj

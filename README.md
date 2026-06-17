@@ -1,6 +1,6 @@
 # VerticalTimeline
 
-A Fusion 360 add-in that adds a vertical timeline. Works on Windows and macOS.
+A Fusion 360 add-in that adds a vertical timeline. Works on Windows and macOS, though development and testing happen primarily on macOS.
 
 <img src="screenshot-dark.png" width="170" alt="Vertical timeline (dark mode)">
 
@@ -25,9 +25,12 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
 * Double-click the name to rename it; double-click anywhere else on the row to
   edit the feature/part.
 * Right-click an item for a context menu: *Roll Timeline Marker Here*, *Edit*,
-  *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an item past the history
-  marker (rolled back), the menu also offers *Delete all features after History
-  Marker*.
+  *Toggle Translucency*, *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an
+  item past the history marker (rolled back), the menu also offers *Delete all
+  features after History Marker*. *Toggle Translucency* makes the feature's
+  bodies 50% translucent (and back), like Fusion's *Opacity Control*.
+* Drag the history-marker bar (the line between the active and rolled-back
+  items) onto a row to roll the marker there, SolidWorks-style.
 * *Cmd*/*Ctrl*-click (or *Shift*-click for a range) to select multiple items.
   The selection is pushed to Fusion as a real selection, so you can then run a
   command such as *Mirror* on those features. Right-click to *Create Group* or
@@ -35,7 +38,8 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
 
 Selecting a feature in the Fusion GUI also highlights the matching row in the
 timeline. Items that Fusion reports as errored or warned are highlighted red or
-yellow, with the message shown on hover.
+yellow, with the message shown on hover. A fully constrained sketch shows
+Fusion's own lock-badge sketch icon.
 
 The palette shows its own context menu rather than Fusion's native timeline
 menu. Some native entries — *Create Selection Set*, *Configure*, *Find in
@@ -51,6 +55,15 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.7.0
+  * Draggable history-marker bar: drag the marker (the silver line with the grip
+    on the right, between the active and rolled-back items) onto a row to roll
+    the marker there, SolidWorks-style.
+  * New *Toggle Translucency* context-menu item makes a feature's bodies 50%
+    translucent (and back), like Fusion's *Opacity Control*.
+  * Fully constrained sketches now show Fusion's own lock-badge sketch icon.
+  * Fixed the sheet-metal component icon (it had been showing the generic
+    placeholder); the add-in can now load Fusion's SVG-only icons too.
 * v 0.6.0
   * Fixed group collapse: only the last group's collapse toggle used to work.
   * Rolled-back items now offer *Delete all features after History Marker* in

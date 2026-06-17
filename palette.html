@@ -28,6 +28,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 --selected-hover-bg: #b9dbff;
                 --group-border: #000000;
                 --rolled-back-border: silver;
+                --marker: #808080;
+                --marker-active: #4d4d4d;
                 --name-hover-outline: silver;
                 --name-focus-bg: #ffffff;
                 --status-fg: #a05000;
@@ -46,6 +48,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     --selected-hover-bg: #3a648a;
                     --group-border: #5a5a5a;
                     --rolled-back-border: #6a6a6a;
+                    --marker: #cfcfcf;
+                    --marker-active: #ffffff;
                     --name-hover-outline: #777777;
                     --name-focus-bg: #1e1e1e;
                     --status-fg: #e0a35c;
@@ -167,6 +171,60 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             .feature.health-warning .name {
                 color: var(--health-warning);
             }
+            /* Draggable rollback (history-marker) bar. Sits on the boundary
+               between active and rolled-back features; drag it onto a row to
+               roll the marker there. */
+            #timeline {
+                position: relative;
+            }
+            .marker-handle {
+                position: absolute;
+                left: 0;
+                right: 0;
+                height: 11px;
+                /* Half the height, so the bar is centered on the marker
+                   boundary and both the line and the grip line up on it. */
+                margin-top: -5.5px;
+                cursor: ns-resize;
+                z-index: 50;
+            }
+            .marker-handle::before {
+                content: "";
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 50%;
+                transform: translateY(-50%);
+                height: 2px;
+                background-color: var(--marker);
+            }
+            /* Pentagon "flag" grip at the right end of the bar, matching the
+               rollback handle on Fusion's own timeline. */
+            .marker-handle::after {
+                content: "";
+                position: absolute;
+                right: 0;
+                top: 50%;
+                transform: translateY(-50%);
+                width: 9px;
+                height: 9px;
+                background-color: var(--marker);
+                clip-path: polygon(45% 0, 100% 0, 100% 100%, 45% 100%, 0 50%);
+            }
+            .marker-handle:hover::before, .marker-handle.dragging::before,
+            .marker-handle:hover::after, .marker-handle.dragging::after {
+                background-color: var(--marker-active);
+            }
+            .marker-drop-indicator {
+                position: absolute;
+                left: 0;
+                right: 0;
+                height: 2px;
+                margin-top: -1px;
+                background-color: var(--marker-active);
+                z-index: 49;
+                pointer-events: none;
+            }
             ul {
                 padding-left: 0px;
             }
@@ -280,6 +338,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     let timeline = document.getElementById('timeline');
                     timeline.innerHTML = '';
                     appendItems(timeline, data['features'], data['max-parents'])
+                    positionMarkerHandle();
 
                     break;
                 case 'showMessage':
@@ -665,6 +724,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             if (!isGroup) {
                 entries.push({ label: 'Edit', icon: editIcon,
                                run: () => sendFeatureAction('editFeature', id) });
+                entries.push({ label: 'Toggle Translucency',
+                               run: () => sendFeatureAction('toggleTranslucent', id) });
             }
             entries.push({ label: 'Rename', icon: menuIcons['renameFeature'],
                            run: () => startRename(item) });
@@ -788,6 +849,98 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     function highlightFeatures(ids) {
         selectedIds = new Set((ids || []).map(Number));
         applySelection();
+    }
+
+    // ---- Draggable rollback (history-marker) bar ----
+
+    var markerHandle = null;
+    var dropIndicator = null;
+    var draggingMarker = false;
+    var markerStartY = 0;
+
+    function positionMarkerHandle() {
+        let timeline = document.getElementById('timeline');
+        if (!markerHandle) {
+            markerHandle = document.createElement('div');
+            markerHandle.className = 'marker-handle';
+            markerHandle.title = 'Drag to roll the history marker';
+            markerHandle.addEventListener('pointerdown', onMarkerPointerDown);
+            markerHandle.addEventListener('pointermove', onMarkerPointerMove);
+            markerHandle.addEventListener('pointerup', onMarkerPointerUp);
+        }
+        // Clearing #timeline on refresh drops the handle; re-attach it.
+        timeline.appendChild(markerHandle);
+
+        let rows = timeline.querySelectorAll('.feature');
+        if (rows.length === 0) {
+            markerHandle.style.display = 'none';
+            return;
+        }
+        // The marker sits above the first rolled-back row, or below the last row
+        // when nothing is rolled back.
+        let firstRolled = timeline.querySelector('.feature[data-rolled-back="1"]');
+        let y = firstRolled ? firstRolled.offsetTop
+                            : rows[rows.length - 1].offsetTop + rows[rows.length - 1].offsetHeight;
+        markerHandle.style.top = y + 'px';
+        markerHandle.style.display = 'block';
+    }
+
+    // The feature row whose vertical span contains viewport-y (skips rows hidden
+    // inside a collapsed group).
+    function rowAtClientY(y) {
+        for (let row of document.querySelectorAll('#timeline .feature')) {
+            if (row.offsetParent === null) continue;
+            let r = row.getBoundingClientRect();
+            if (y >= r.top && y <= r.bottom) return row;
+        }
+        return null;
+    }
+
+    function onMarkerPointerDown(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        draggingMarker = true;
+        markerStartY = e.clientY;
+        markerHandle.classList.add('dragging');
+        markerHandle.setPointerCapture(e.pointerId);
+    }
+
+    function onMarkerPointerMove(e) {
+        if (!draggingMarker) return;
+        showDropIndicator(rowAtClientY(e.clientY));
+    }
+
+    function onMarkerPointerUp(e) {
+        if (!draggingMarker) return;
+        draggingMarker = false;
+        markerHandle.classList.remove('dragging');
+        try { markerHandle.releasePointerCapture(e.pointerId); } catch (err) {}
+        hideDropIndicator();
+        // Ignore a click that never actually dragged, so the marker doesn't jump
+        // just from grabbing the handle.
+        if (Math.abs(e.clientY - markerStartY) < 3) return;
+        let row = rowAtClientY(e.clientY);
+        if (row) {
+            sendFeatureAction('rollToFeature', parseInt(row.getAttribute('data-id')));
+        }
+    }
+
+    function showDropIndicator(row) {
+        if (!row) { hideDropIndicator(); return; }
+        let timeline = document.getElementById('timeline');
+        if (!dropIndicator) {
+            dropIndicator = document.createElement('div');
+            dropIndicator.className = 'marker-drop-indicator';
+        }
+        timeline.appendChild(dropIndicator);
+        dropIndicator.style.top = (row.offsetTop + row.offsetHeight) + 'px';
+        dropIndicator.style.display = 'block';
+    }
+
+    function hideDropIndicator() {
+        if (dropIndicator) {
+            dropIndicator.style.display = 'none';
+        }
     }
 
     async function send(action, data = {}) {
