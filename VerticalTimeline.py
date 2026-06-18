@@ -360,6 +360,17 @@ def get_menu_icons():
     # native timeline menu, and the only on-disk suppress icons are joint /
     # rigid-group specific (misleading for arbitrary features).
 
+    # Change Transparency: the bundled cube icon (solid front, dotted-wireframe
+    # back) shared with the standalone ChangeTransparency add-in. Theme-split:
+    # neutral file = dark ink (light palette), -dark file = light ink.
+    cube_dir = os.path.join(FILE_DIR, 'resources', 'changetransparency')
+    cube_light = os.path.join(cube_dir, '16x16@2x.png')
+    cube_dark = os.path.join(cube_dir, '16x16-dark@2x.png')
+    if os.path.exists(cube_light):
+        icons['toggleTranslucent'] = {
+            'light': cube_light,
+            'dark': cube_dark if os.path.exists(cube_dark) else cube_light}
+
     _menu_icons_cache = icons
     return icons
 
@@ -1054,9 +1065,12 @@ def palette_incoming_from_html_handler(args):
             # Move to the last item of the group.
             obj = obj[-1]
         elif not obj.isGroup and obj.parentGroup and obj.parentGroup.isCollapsed:
-            # Cannot move to object inside collapsed group.
-            # Move to the group instead.
-            obj = obj.parentGroup
+            # The palette tracks its own group collapse state, so a group can be
+            # open in the palette (child rows draggable) while still collapsed in
+            # Fusion. Expand it in Fusion so the marker can land on this child,
+            # instead of redirecting the roll to the whole group (which made the
+            # marker only ever sit before/after the group).
+            obj.parentGroup.isCollapsed = False
         html_commands.append(obj.rollTo(False))
         html_commands.append(invalidate(send=False))
     elif action == 'toggleTranslucent':
@@ -1074,7 +1088,7 @@ def palette_incoming_from_html_handler(args):
                 bodies = []
         if not bodies:
             html_commands.append(report_message(
-                'This item has no body to make translucent.'))
+                'This item has no body to change transparency.'))
         else:
             # Flip: if anything is already translucent, restore all to opaque;
             # otherwise make them 50% translucent.
@@ -1277,6 +1291,35 @@ def document_activated_handler(args):
         if get_enabled():
             show_palette()
 
+def find_node_id_for_entity(native, token):
+    '''Fallback entity->node match when the prebuilt token index misses.
+
+    Scans the timeline cache comparing each node's live entity to the selected
+    one (object identity first, then a freshly-read token), so both tokens come
+    from the same moment. O(nodes), only hit on an index miss.'''
+    if not timeline_cache_map:
+        return None
+    for node in timeline_cache_map.values():
+        obj = node.obj
+        if obj is None or node.children:
+            # Top placeholder / group node: no selectable entity.
+            continue
+        try:
+            entity = obj.entity
+        except Exception:
+            continue
+        if entity is None:
+            continue
+        node_native = getattr(entity, 'nativeObject', None) or entity
+        if node_native == native:
+            return node.id
+        try:
+            if node_native.entityToken == token:
+                return node.id
+        except Exception:
+            pass
+    return None
+
 def active_selection_changed_handler(args):
     '''Highlight the timeline row(s) matching the feature selected in Fusion's GUI.
 
@@ -1304,6 +1347,12 @@ def active_selection_changed_handler(args):
             except Exception:
                 continue
             node_id = timeline_cache_entity_index.get(token)
+            if node_id is None:
+                # Fusion entityTokens can differ between the access at refresh
+                # time (obj.entity) and selection time, so the prebuilt index can
+                # miss. Fall back to comparing the selected entity against each
+                # node's live entity, both read in this same moment.
+                node_id = find_node_id_for_entity(native, token)
             if node_id is not None:
                 selected_ids.append(node_id)
     except Exception:

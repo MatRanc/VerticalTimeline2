@@ -25,10 +25,10 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
 * Double-click the name to rename it; double-click anywhere else on the row to
   edit the feature/part.
 * Right-click an item for a context menu: *Roll Timeline Marker Here*, *Edit*,
-  *Toggle Translucency*, *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an
+  *Change Transparency*, *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an
   item past the history marker (rolled back), the menu also offers *Delete all
-  features after History Marker*. *Toggle Translucency* makes the feature's
-  bodies 50% translucent (and back), like Fusion's *Opacity Control*.
+  features after History Marker*. *Change Transparency (50% / 100%)* toggles the
+  feature's bodies between 50% and 100% opacity, like Fusion's *Opacity Control*.
 * Drag the history-marker bar (the line between the active and rolled-back
   items) onto a row to roll the marker there, SolidWorks-style.
 * *Cmd*/*Ctrl*-click (or *Shift*-click for a range) to select multiple items.
@@ -55,6 +55,15 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.7.3
+  * The *Toggle Translucency* context-menu item is now *Change Transparency
+    (50% / 100%)* with a cube icon, matching the standalone ChangeTransparency
+    add-in.
+  * Rolling the history marker onto an item inside a collapsed group now lands on
+    that item (the group auto-expands) instead of redirecting the roll to the
+    whole group.
+  * Selecting a grouped feature in Fusion now reliably highlights its timeline
+    row, even when Fusion's entity token differs between refresh and selection.
 * v 0.7.2
   * Browser icons load Fusion's high-resolution (2x) artwork, so they are crisp
     on Retina/HiDPI displays instead of blurry.

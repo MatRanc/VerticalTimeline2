@@ -738,7 +738,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             if (!isGroup) {
                 entries.push({ label: 'Edit', icon: editIcon,
                                run: () => sendFeatureAction('editFeature', id) });
-                entries.push({ label: 'Toggle Translucency',
+                entries.push({ label: 'Change Transparency (50% / 100%)',
+                               icon: menuIcons['toggleTranslucent'],
                                run: () => sendFeatureAction('toggleTranslucent', id) });
             }
             entries.push({ label: 'Rename', icon: menuIcons['renameFeature'],
