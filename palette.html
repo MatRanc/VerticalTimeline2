@@ -313,6 +313,21 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     // Icon file paths for the right-click menu, supplied by the add-in.
     var menuIcons = {};
 
+    // Remembered scroll position per document, so switching files (and plain
+    // refreshes) restore where the user was instead of jumping to the top.
+    // Captured live on user scroll (below) rather than at rebuild time: the
+    // palette resets scrollTop to 0 when the list is cleared, and a restore that
+    // fails to stick would otherwise get read back as 0 and overwrite the saved
+    // value. restoringScroll suppresses capture while we drive the scroll.
+    var scrollByDoc = {};
+    var currentDoc = null;
+    var restoringScroll = false;
+    function getScroller() { return document.scrollingElement || document.documentElement; }
+    window.addEventListener('scroll', function() {
+        if (restoringScroll || currentDoc === null) return;
+        scrollByDoc[currentDoc] = getScroller().scrollTop;
+    }, true);
+
     // The add-in supplies a {light, dark} pair for every icon; pick the one that
     // matches the palette's current theme (the same prefers-color-scheme signal
     // the CSS uses). A plain string is already-resolved (the Edit row icon).
@@ -344,6 +359,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         try {
             switch (action) {
                 case 'setTimeline':
+                    restoringScroll = true;
                     let message = document.getElementById('message');
                     message.innerText = data['message'];
 
@@ -354,6 +370,22 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     appendItems(timeline, data['features'], data['max-parents'])
                     positionMarkerHandle();
 
+                    // Restore the position remembered for this document. The
+                    // palette browser commits a fresh layout after this handler
+                    // returns (resetting scrollTop) and the new rows may not have
+                    // their final height for a frame or two, so a single set
+                    // doesn't stick. Re-apply for a handful of frames.
+                    // ponytail: brute re-apply over ~6 frames; switch to a
+                    // ResizeObserver/scrollend wait if this ever feels janky.
+                    currentDoc = data['document'] || '';
+                    let scroller = getScroller();
+                    let target = scrollByDoc[currentDoc] || 0;
+                    let frames = 6;
+                    (function apply() {
+                        scroller.scrollTop = target;
+                        if (--frames > 0) requestAnimationFrame(apply);
+                        else restoringScroll = false;
+                    })();
                     break;
                 case 'showMessage':
                     showStatus(data['message']);

@@ -55,6 +55,9 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.7.4
+  * The timeline now keeps its scroll position per document, so switching files
+    (and plain refreshes) returns you to where you were instead of the top.
 * v 0.7.3
   * The *Toggle Translucency* context-menu item is now *Change Transparency
     (50% / 100%)* with a cube icon, matching the standalone ChangeTransparency
