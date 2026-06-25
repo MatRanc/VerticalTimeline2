@@ -1131,10 +1131,33 @@ def palette_incoming_from_html_handler(args):
         obj = node.obj
         deleted = False
         type_name = 'item'
+        err = ''
         try:
             if obj.isGroup:
-                # Delete the group itself; the features inside it remain.
-                deleted = obj.deleteMe(False)
+                # Match Fusion's native "Group Delete" prompt: choose whether the
+                # contents survive. deleteMe(False) keeps/expands them;
+                # deleteMe(True) deletes them too.
+                choice = ui.messageBox(
+                    'Delete this timeline group?\n\n'
+                    'Yes – Delete group and expand its contents\n'
+                    'No – Delete both group and its contents\n'
+                    'Cancel – Keep the group',
+                    'Group Delete',
+                    adsk.core.MessageBoxButtonTypes.YesNoCancelButtonType,
+                    adsk.core.MessageBoxIconTypes.QuestionIconType)
+                if choice == adsk.core.DialogResults.DialogCancel:
+                    deleted = True  # user backed out; nothing failed
+                else:
+                    # deleteMe acts on the group as a single collapsed timeline
+                    # unit; an expanded group has no timeline index, so
+                    # deleteMe(True) throws. The palette can show a group that is
+                    # still expanded in Fusion, so collapse it first (same
+                    # workaround as rollToFeature above).
+                    try:
+                        obj.isCollapsed = True
+                    except (RuntimeError, AttributeError):
+                        pass
+                    deleted = obj.deleteMe(choice == adsk.core.DialogResults.DialogNo)
             else:
                 entity = obj.entity
                 type_name = thomasa88lib.utils.short_class(entity)
@@ -1142,12 +1165,13 @@ def palette_incoming_from_html_handler(args):
                 # (a feature shown inside a component) is often refused.
                 target = getattr(entity, 'nativeObject', None) or entity
                 deleted = target.deleteMe()
-        except (RuntimeError, AttributeError):
+        except (RuntimeError, AttributeError) as e:
             deleted = False
+            err = str(e)
         if not deleted:
+            reason = f': {err}' if err else ' (it may be needed by later features).'
             html_commands.append(report_message(
-                f'Could not delete this {type_name} '
-                '(it may be needed by later features).'))
+                f'Could not delete this {type_name}{reason}'))
         html_commands.append(invalidate(send=False))
     elif action == 'deleteAllAfterMarker':
         # Mirrors Fusion's native "Delete all features after History Marker"
