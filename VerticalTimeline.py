@@ -433,12 +433,20 @@ def invalidate(send=True, clear=False):
         else:
             print("Unhandled timeline status:", timeline_status)
 
+    # Identify the active document so the palette can remember each document's
+    # scroll position and restore it when the user switches back.
+    try:
+        doc_id = app.activeDocument.name
+    except Exception:
+        doc_id = ''
+
     action = 'setTimeline'
     data = {
          'features': features,
          'max-parents': max_parents,
          'message': message,
          'menu-icons': get_menu_icons(),
+         'document': doc_id,
     }
 
     if not send:
