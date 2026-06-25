@@ -73,6 +73,15 @@ OCCURRENCE_NEW_COMP = 1
 OCCURRENCE_COPY_COMP = 2
 OCCURRENCE_SHEET_METAL = 3
 OCCURRENCE_BODIES_COMP = 4
+OCCURRENCE_CUT_COMP = 5
+OCCURRENCE_PIN_COMP = 6
+
+# Occurrence types whose timeline name is a fixed read-only prefix + the
+# component's instance name (not a bare, renameable component name). The row's
+# name isn't offered as a component rename for these. (CopyPaste is historically
+# left out of this set - existing behavior.)
+OCCURRENCE_PREFIXED_TYPES = (OCCURRENCE_BODIES_COMP, OCCURRENCE_CUT_COMP,
+                             OCCURRENCE_PIN_COMP)
 
 TIMELINE_STATUS_OK = 0
 TIMELINE_STATUS_PRODUCT_NOT_READY = 1
@@ -88,8 +97,13 @@ OCCURRENCE_RESOURCE_MAP = {
         '../../Neutron/Neutron/UI/Base/Resources/Browser/SheetMetalComponent',  # macOS bundle
         'Neutron/UI/Base/Resources/Browser/SheetMetalComponent',                # Windows webdeploy
     ], ''),
-    #'FusionCreateComponentFromBodyEditCommand' seems to actually create a new component
+    # "Create components from bodies" - Fusion's own timeline shows the
+    # CreateComponentFromBody glyph (box -> component) for these rows.
     OCCURRENCE_BODIES_COMP: ('Fusion/UI/FusionUI/Resources/Assembly/CreateComponentFromBody', ''),
+    # Cut-paste and pinned occurrences each get their matching Fusion icon
+    # instead of falling through to the generic component glyph.
+    OCCURRENCE_CUT_COMP: ('Fusion/UI/FusionUI/Resources/Assembly/CutPasteInstance', ''),
+    OCCURRENCE_PIN_COMP: ('Fusion/UI/FusionUI/Resources/Assembly/PinOccurrence', ''),
     OCCURRENCE_UNKNOWN_COMP: ('Fusion/UI/FusionUI/Resources/finish/finishX', '')
 }
 
@@ -564,7 +578,7 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                 # Strip the whitespace to make the list cleaner.
                 feature['name'] = feature['name'].lstrip()
                 try:
-                    if thomasa88lib.timeline.get_occurrence_type(obj) != OCCURRENCE_BODIES_COMP:
+                    if thomasa88lib.timeline.get_occurrence_type(obj) not in OCCURRENCE_PREFIXED_TYPES:
                         # Name is a read-only instance variant of the component's name,
                         # with a prefix on it.
                         # Let the user modify the component's name instead
@@ -960,7 +974,7 @@ def palette_incoming_from_html_handler(args):
             if (not obj.isGroup
                 and entity
                 and entity.classType() == 'adsk::fusion::Occurrence'
-                and thomasa88lib.timeline.get_occurrence_type(obj) != OCCURRENCE_BODIES_COMP):
+                and thomasa88lib.timeline.get_occurrence_type(obj) not in OCCURRENCE_PREFIXED_TYPES):
                 # Bonus of not doing a Command transaction: Undo history actually says from and to name.
                 entity.component.name = data['value']
                 # The shown name will have changed. Invalidate.

@@ -35,6 +35,8 @@ OCCURRENCE_NEW_COMP = 1
 OCCURRENCE_COPY_COMP = 2
 OCCURRENCE_SHEET_METAL = 3
 OCCURRENCE_BODIES_COMP = 4
+OCCURRENCE_CUT_COMP = 5
+OCCURRENCE_PIN_COMP = 6
 
 def get_timeline():
     app = adsk.core.Application.get()
@@ -107,8 +109,15 @@ def get_occurrence_type(timeline_obj):
         #return OCCURRENCE_SHEET_METAL
     if type_prefix == 'CopyPaste':
         return OCCURRENCE_COPY_COMP
+    # Cut-paste and pinned occurrences also carry a fixed prefix and each has its
+    # own Fusion icon (CutPasteInstance / PinOccurrence). startswith covers the
+    # spaced ("CutPaste X:1") and unspaced ("Pin4") name forms. See
+    # OCCURRENCE_RESOURCE_MAP.
+    if type_prefix.startswith('CutPaste'):
+        return OCCURRENCE_CUT_COMP
+    if type_prefix.startswith('Pin'):
+        return OCCURRENCE_PIN_COMP
 
-    if hasattr(entity, 'bRepBodies'):
-        return OCCURRENCE_BODIES_COMP
-
-    return OCCURRENCE_UNKNOWN_COMP
+    # Any other prefixed occurrence is a component made from bodies
+    # ("create components from bodies").
+    return OCCURRENCE_BODIES_COMP
