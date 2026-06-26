@@ -48,6 +48,18 @@ included.
 
 The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. Press *Shift+S* in Fusion 360™ and go to the *Add-Ins* tab.
 
+## Known limitations
+
+* **A few feature types show a generic placeholder icon instead of their real
+  one** ([#8](https://github.com/MatRanc/VerticalTimeline2/issues/8)). Fusion's
+  API hands some features back only as the generic base `Feature` class — with
+  no concrete subclass and no other type information — so the add-in cannot tell
+  what they are in order to pick an icon. Observed so far: base mesh features,
+  some *Scale* features, and *Modify* features. (Note Fusion is inconsistent:
+  the *same* feature kind sometimes comes through with its real type, so most
+  rows do get the correct icon.) There is no API workaround; the issue is left
+  open in case a future Fusion release exposes the type.
+
 ## TODO
 
 * Improve performance further for very large files. See

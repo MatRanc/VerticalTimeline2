@@ -118,6 +118,18 @@ PLANE_RESOURCE_MAP = {
     'ConstructionPlaneDistanceOnPathDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_onpath', 'FusionDcEditWorkPlaneAlongPathCommand'),
 }
 
+# Generic construction-plane glyph used when we can't tell which kind of plane it
+# is: the definition type isn't in the map above, or Fusion blocks access to
+# .definition entirely (raises InternalValidationError on some planes, #8). Beats
+# falling through to the "info access prohibited" placeholder.
+PLANE_FALLBACK_RES = ('Fusion/UI/FusionUI/Resources/tools/SymbolPalette/Plane', '')
+def get_plane_res(i):
+    try:
+        match = PLANE_RESOURCE_MAP.get(thomasa88lib.utils.short_class(i.entity.definition))
+    except Exception:
+        match = None
+    return match or PLANE_FALLBACK_RES
+
 FEATURE_RESOURCE_MAP = {
     # This list is hand-crafted. Please respect the work put into this list and
     # retain the Copyright and License stanzas if you copy it.
@@ -183,7 +195,7 @@ FEATURE_RESOURCE_MAP = {
     'Snapshot': ('Fusion/UI/FusionUI/Resources/Assembly/Snapshot', 'SnapshotActivate'),
 
     # Planes
-    'ConstructionPlane': lambda i: PLANE_RESOURCE_MAP.get(thomasa88lib.utils.short_class(i.entity.definition)),
+    'ConstructionPlane': get_plane_res,
 
     # Move/Align. Historically Fusion did not allow accessing the entity of these
     # features (see bug link below), so they fell back to the "info access
@@ -191,8 +203,20 @@ FEATURE_RESOURCE_MAP = {
     # so they get a proper icon and become editable. If the entity is still
     # inaccessible, get_features_from_node() handles the RuntimeError gracefully
     # and these entries are simply never reached.
-    'MoveFeature': ('Fusion/UI/FusionUI/Resources/Modeling/Move', 'FusionDcMoveCopyEditCommand'),
-    'AlignFeature': ('Fusion/UI/FusionUI/Resources/Modeling/Align', 'FusionDcAlignEditCommand'),
+    # NOTE: the icons live under modify/ and Assembly/, NOT Modeling/ - the
+    # earlier Modeling/Move + Modeling/Align paths don't exist on disk, so these
+    # rows fell through to the finishX placeholder even when editable (#8).
+    'MoveFeature': ('Fusion/UI/FusionUI/Resources/modify/move', 'FusionDcMoveCopyEditCommand'),
+    'AlignFeature': ('Fusion/UI/FusionUI/Resources/Assembly/Align', 'FusionDcAlignEditCommand'),
+
+    # Mesh, attached canvas ("frame"-like image), and copy/paste-body features -
+    # surface in the timeline but weren't mapped, so they showed the finishX
+    # placeholder (#8). Icon only; add edit-command ids if double-click-to-edit
+    # is wanted later. # ponytail: icon only, no edit wiring yet.
+    'MeshFeature': ('Fusion/UI/FusionUI/Resources/Mesh/MeshBody', ''),
+    'MeshConvertFeature': ('Fusion/UI/FusionUI/Resources/Mesh/Convert', ''),
+    'Canvas': ('Fusion/UI/FusionUI/Resources/Image/AddCanvas', ''),
+    'CopyPasteBody': ('Fusion/UI/FusionUI/Resources/Assembly/CopyPasteBodies', ''),
 
     # Bug: https://forums.autodesk.com/t5/fusion-360-api-and-scripts/api-bug-cannot-access-entity-of-quot-move-quot-feature/m-p/9651921
     # '2 : InternalValidationError : res': 'Fusion/UI/FusionSheetMetalUI/Resources/Flange',
