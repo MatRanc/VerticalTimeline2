@@ -316,35 +316,38 @@ def get_feature_res(obj, entity=None, fusion_type=None):
 # resource files do not change during a session, so there is no need to hit the
 # filesystem (os.path.exists) once per feature on every timeline refresh.
 _image_path_cache = {}
+# Icons render in a 16px box but on Retina that needs a 32px source or it looks
+# soft, so prefer the 2x raster (16x16@2x.png, or 32x32.png where a folder names
+# it that way), falling back to the plain 16px PNG, then SVG. Fusion ships
+# theme-split assets: the neutral files have a dark foreground (right on a light
+# palette) and the "-dark" files a light foreground (right on a dark palette).
+# The dark set falls back to the neutral set for the many icons with no "-dark".
+_ICON_NEUTRAL_NAMES = ('16x16@2x.png', '32x32.png', '16x16.png', '16x16.svg',
+                       '16x16-dark.svg')
+def _icon_in_folder(folder, dark=False):
+    '''First icon file that exists in an already-resolved folder. Shared by
+    subpath lookups (get_image_path) and native-command icons taken from a
+    command's absolute resourceFolder.'''
+    if dark:
+        names = ('16x16-dark@2x.png', '32x32-dark.png', '16x16-dark.png',
+                 '16x16-dark.svg') + _ICON_NEUTRAL_NAMES
+    else:
+        names = _ICON_NEUTRAL_NAMES
+    for name in names:
+        path = f'{folder}/{name}'
+        if os.path.exists(path):
+            return path
+    return None
+
 def get_image_path(subpath, dark=False):
     key = (subpath, dark)
     if key in _image_path_cache:
         return _image_path_cache[key]
 
     base = f'{thomasa88lib.utils.get_fusion_deploy_folder()}/{subpath}'
-    # Icons render in a 16px box but on Retina that needs a 32px source or it
-    # looks soft, so prefer the 2x raster (16x16@2x.png, or 32x32.png where a
-    # folder names it that way), falling back to the plain 16px PNG, then SVG.
-    # Fusion ships theme-split assets: the neutral files have a dark foreground
-    # (right on a light palette) and the "-dark" files a light foreground (right
-    # on a dark palette). The palette is theme-adaptive, so the caller asks for
-    # whichever the palette is currently rendering. The dark set falls back to
-    # the neutral set for the many icons that ship no "-dark" variant.
-    neutral = ('16x16@2x.png', '32x32.png', '16x16.png', '16x16.svg',
-               '16x16-dark.svg')
-    if dark:
-        names = ('16x16-dark@2x.png', '32x32-dark.png', '16x16-dark.png',
-                 '16x16-dark.svg') + neutral
-    else:
-        names = neutral
-    result = None
-    for name in names:
-        path = f'{base}/{name}'
-        if os.path.exists(path):
-            result = path
-            break
+    result = _icon_in_folder(base, dark)
     if result is None:
-        print(f'File does not exist: {base}/{names[0]}')
+        print(f'File does not exist: {base}/{_ICON_NEUTRAL_NAMES[0]}')
 
     _image_path_cache[key] = result
     return result
@@ -398,16 +401,48 @@ def get_menu_icons():
     # native timeline menu, and the only on-disk suppress icons are joint /
     # rigid-group specific (misleading for arbitrary features).
 
-    # Change Transparency: the bundled cube icon (solid front, dotted-wireframe
-    # back) shared with the standalone ChangeTransparency add-in. Theme-split:
-    # neutral file = dark ink (light palette), -dark file = light ink.
-    cube_dir = os.path.join(FILE_DIR, 'resources', 'changetransparency')
-    cube_light = os.path.join(cube_dir, '16x16@2x.png')
-    cube_dark = os.path.join(cube_dir, '16x16-dark@2x.png')
-    if os.path.exists(cube_light):
-        icons['toggleTranslucent'] = {
-            'light': cube_light,
-            'dark': cube_dark if os.path.exists(cube_dark) else cube_light}
+    # Show/Hide and the sketch display toggles (Profile / Dimension / Projected /
+    # Construction geometry) all use Fusion's eye icon, matching the browser-tree
+    # menu in the issue screenshots.
+    eye_pair = pair('Fusion/UI/FusionUI/Resources/Timeline/Eye')
+    if eye_pair:
+        icons['toggleVisibility'] = eye_pair
+
+    # Native sketch right-click options, with Fusion's own icons so the menu
+    # matches the native look.
+    lost_pair = pair('Fusion/UI/FusionUI/Resources/sketch/sketch_relinkProjection')
+    if lost_pair:
+        icons['manageLostProjections'] = lost_pair
+    config_pair = pair('Fusion/UI/FusionUI/Resources/Modeling/DesignConfiguration')
+    if config_pair:
+        icons['configure'] = config_pair
+    # Look At lives in the Neutron tree, whose path differs between the macOS app
+    # bundle and the Windows webdeploy layout (same split as the browser icons).
+    lookat_subs = ['../../Neutron/Neutron/UI/Commands/Resources/Camera/LookAt',
+                   'Neutron/UI/Commands/Resources/Camera/LookAt']
+    look_light = get_first_image_path(lookat_subs, False)
+    if look_light:
+        icons['lookAt'] = {'light': look_light,
+                           'dark': get_first_image_path(lookat_subs, True) or look_light}
+    # Redefine Sketch Plane ships no stable resource subpath, so take its icon
+    # from the live command definition.
+    redefine = get_command_icon_pair('Redefine Sketch Plane')
+    if redefine:
+        icons['redefineSketchPlane'] = redefine
+
+    # Convert to DM Feature: ships no stable resource subpath, so take its icon
+    # from the live command definition (the exact orange base-feature glyph).
+    convert_pair = get_command_icon_pair('Convert to DM Feature')
+    if convert_pair:
+        icons['convertToDM'] = convert_pair
+    # Review warning: the Neutron browser warning glyph (same tree/path split as
+    # Look At and the browser row icons).
+    warn_subs = ['../../Neutron/Neutron/UI/Base/Resources/Browser/WarningInSubItem',
+                 'Neutron/UI/Base/Resources/Browser/WarningInSubItem']
+    warn_light = get_first_image_path(warn_subs, False)
+    if warn_light:
+        icons['reviewWarning'] = {'light': warn_light,
+                                  'dark': get_first_image_path(warn_subs, True) or warn_light}
 
     _menu_icons_cache = icons
     return icons
@@ -594,6 +629,17 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                                 set_feature_image(feature, SKETCH_FULLY_CONSTRAINED_RES)
                     except Exception:
                         pass
+                    # Current display-toggle states, so the right-click menu can
+                    # label each item the way Fusion does ("Hide X" when shown,
+                    # "Show X" when hidden).
+                    for key, attr in (('profile', 'areProfilesShown'),
+                                      ('dimension', 'areDimensionsShown'),
+                                      ('projected', 'isProjectedGeometryShown'),
+                                      ('construction', 'isConstructionGeometryShown')):
+                        try:
+                            feature['sk_' + key] = bool(getattr(entity, attr))
+                        except Exception:
+                            pass
             else:
                 # Move and Align and more does not allow us to access their entity attribute
                 # Bug: https://forums.autodesk.com/t5/fusion-360-api-and-scripts/api-bug-cannot-access-entity-of-quot-move-quot-feature/m-p/9651921
@@ -956,20 +1002,44 @@ def add_entity_to_collection(newSelection, entity, design):
         return False
     return True
 
-def get_translucent_bodies(entity):
-    '''Bodies whose opacity the translucency toggle flips. Occurrences have no
-    settable opacity, so fall through to their component's bodies.'''
-    if isinstance(entity, adsk.fusion.BRepBody):
-        return [entity]
-    if isinstance(entity, adsk.fusion.Occurrence):
-        return list(entity.component.bRepBodies)
-    bodies = getattr(entity, 'bodies', None)
-    if bodies and bodies.count:
-        return list(bodies)
-    parent = getattr(entity, 'parentComponent', None)
-    if parent:
-        return list(parent.bRepBodies)
-    return []
+def find_command_def_by_name(name):
+    '''Look up one of Fusion's command definitions by its display name (the
+    label shown in the native menu). Matching by label - not a hard-coded id -
+    keeps these working without guessing internal command ids. Returns None if
+    Fusion doesn't expose a command with that name.'''
+    target = name.strip().rstrip('.').lower()
+    defs = ui.commandDefinitions
+    prefix_match = None
+    for i in range(defs.count):
+        d = defs.item(i)
+        try:
+            n = (d.name or '').strip().rstrip('.').lower()
+        except Exception:
+            continue
+        if n == target:
+            return d
+        if prefix_match is None and target and n.startswith(target):
+            prefix_match = d
+    return prefix_match
+
+def get_command_icon_pair(name):
+    '''Light/dark menu icon for one of Fusion's own commands, read from its
+    command definition's resourceFolder so the menu shows the exact native icon.
+    None if the command or its icon can't be found.'''
+    # ponytail: only used for commands that ship no stable resource subpath of
+    # their own. Resolves once at menu-build time; if the name doesn't resolve the
+    # item is simply icon-less - the same graceful path the action itself takes.
+    cmd = find_command_def_by_name(name)
+    try:
+        folder = cmd.resourceFolder if cmd else None
+    except Exception:
+        folder = None
+    if not folder:
+        return None
+    light = _icon_in_folder(folder, False)
+    if not light:
+        return None
+    return {'light': light, 'dark': _icon_in_folder(folder, True) or light}
 
 def _delete_entity(obj):
     '''Delete the model entity behind a (non-group) timeline object. Prefer the
@@ -1019,7 +1089,8 @@ def palette_incoming_from_html_handler(args):
     # skip missing nodes via timeline_cache_map.get(i).
     if action in ('setFeatureName', 'selectFeature', 'editFeature',
                   'rollToFeature', 'suppressFeature', 'deleteFeature',
-                  'toggleTranslucent'):
+                  'toggleVisibility', 'toggleSketchAttr',
+                  'selectSketchPlane', 'runNativeCommand'):
         if timeline_cache_map is None or data['id'] not in timeline_cache_map:
             return
 
@@ -1156,35 +1227,94 @@ def palette_incoming_from_html_handler(args):
             obj.parentGroup.isCollapsed = False
         html_commands.append(obj.rollTo(False))
         html_commands.append(invalidate(send=False))
-    elif action == 'toggleTranslucent':
+    elif action == 'toggleVisibility':
+        # Show/Hide, mirroring the entity's browser-tree visibility toggle.
+        # Different entity types expose it differently (isLightBulbOn for
+        # occurrences/bodies/planes, isVisible for sketches), so try both.
         node = timeline_cache_map[data['id']]
         obj = node.obj
         try:
             entity = obj.entity
         except RuntimeError:
             entity = None
-        bodies = []
-        if entity is not None:
-            try:
-                bodies = get_translucent_bodies(entity)
-            except Exception:
-                bodies = []
-        if not bodies:
-            html_commands.append(report_message(
-                'This item has no body to change transparency.'))
-        else:
-            # Flip: if anything is already translucent, restore all to opaque;
-            # otherwise make them 50% translucent.
-            try:
-                make_opaque = any(b.opacity < 0.99 for b in bodies)
-            except (RuntimeError, AttributeError):
-                make_opaque = False
-            new_opacity = 1.0 if make_opaque else 0.5
-            for b in bodies:
+        toggled = False
+        for attr in ('isLightBulbOn', 'isVisible'):
+            if entity is not None and hasattr(entity, attr):
                 try:
-                    b.opacity = new_opacity
+                    setattr(entity, attr, not getattr(entity, attr))
+                    toggled = True
+                    break
                 except (RuntimeError, AttributeError):
                     pass
+        if not toggled:
+            html_commands.append(report_message('Cannot show/hide this item.'))
+        html_commands.append(invalidate(send=False))
+    elif action == 'toggleSketchAttr':
+        # Flip one of a sketch's display booleans (Hide/Show Profile, Dimension,
+        # Projected/Construction Geometries). invalidate() refreshes the timeline
+        # so the menu re-reads the new state and labels the item correctly next time.
+        node = timeline_cache_map[data['id']]
+        obj = node.obj
+        attr = data.get('attr', '')
+        try:
+            entity = obj.entity
+        except RuntimeError:
+            entity = None
+        if entity is not None and hasattr(entity, attr):
+            try:
+                setattr(entity, attr, not getattr(entity, attr))
+            except (RuntimeError, AttributeError) as e:
+                html_commands.append(report_message(
+                    f'Could not change this sketch display option: {e}'))
+        else:
+            html_commands.append(report_message('This option is not available for this item.'))
+        html_commands.append(invalidate(send=False))
+    elif action == 'selectSketchPlane':
+        node = timeline_cache_map[data['id']]
+        obj = node.obj
+        try:
+            entity = obj.entity
+        except RuntimeError:
+            entity = None
+        plane = getattr(entity, 'referencePlane', None)
+        if plane:
+            sel = adsk.core.ObjectCollection.create()
+            sel.add(plane)
+            try:
+                ui.activeSelections.all = sel
+            except Exception as e:
+                html_commands.append(report_message(f'Could not select the sketch plane: {e}'))
+        else:
+            html_commands.append(report_message('This sketch has no selectable plane.'))
+    elif action == 'runNativeCommand':
+        # Select the feature first so the native command has its context, then
+        # run Fusion's own command (found by its menu label). Reports back if the
+        # command isn't available, so the menu item never silently does nothing.
+        node = timeline_cache_map[data['id']]
+        obj = node.obj
+        cmd_name = data.get('name', '')
+        design = app.activeProduct
+        try:
+            entity = obj.entity
+        except RuntimeError:
+            entity = None
+        if entity is not None:
+            sel = adsk.core.ObjectCollection.create()
+            try:
+                add_entity_to_collection(sel, entity, design)
+                if sel.count:
+                    ui.activeSelections.all = sel
+            except Exception:
+                pass
+        cmd_def = find_command_def_by_name(cmd_name)
+        if cmd_def:
+            try:
+                cmd_def.execute()
+            except (RuntimeError, AttributeError) as e:
+                html_commands.append(report_message(f'Could not run "{cmd_name}": {e}'))
+        else:
+            html_commands.append(report_message(
+                f'"{cmd_name}" is not available for this item.'))
     elif action == 'suppressFeature':
         node = timeline_cache_map[data['id']]
         obj = node.obj

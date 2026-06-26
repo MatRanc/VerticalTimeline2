@@ -25,10 +25,11 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
 * Double-click the name to rename it; double-click anywhere else on the row to
   edit the feature/part.
 * Right-click an item for a context menu: *Roll Timeline Marker Here*, *Edit*,
-  *Change Transparency*, *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an
-  item past the history marker (rolled back), the menu also offers *Delete all
-  features after History Marker*. *Change Transparency (50% / 100%)* toggles the
-  feature's bodies between 50% and 100% opacity, like Fusion's *Opacity Control*.
+  *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an item past the history
+  marker (rolled back), the menu also offers *Delete all features after History
+  Marker*. Right-clicking a sketch adds its native options — *Show/Hide*,
+  *Look At*, *Redefine*/*Select Sketch Plane*, *Configure*, and the *Profile* /
+  *Dimension* / *Projected* / *Construction* display toggles.
 * Drag the history-marker bar (the line between the active and rolled-back
   items) onto a row to roll the marker there, SolidWorks-style.
 * *Cmd*/*Ctrl*-click (or *Shift*-click for a range) to select multiple items.

@@ -423,6 +423,14 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             }
             listItem.setAttribute('data-id', feature['id']);
             listItem.setAttribute('data-name', feature.name);
+            listItem.setAttribute('data-type', feature.type || '');
+            // Sketch display states, so the right-click menu can label its
+            // toggles Fusion-style (Hide X when shown / Show X when hidden).
+            for (const k of ['profile', 'dimension', 'projected', 'construction']) {
+                if (feature['sk_' + k] !== undefined) {
+                    listItem.setAttribute('data-sk-' + k, feature['sk_' + k] ? '1' : '0');
+                }
+            }
             if (feature.suppressed) {
                 listItem.setAttribute('data-suppressed', '1');
             }
@@ -735,6 +743,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         let id = parseInt(item.getAttribute('data-id'));
         let isGroup = item.classList.contains('feature-group-header');
         let isSuppressed = item.getAttribute('data-suppressed') === '1';
+        let isSketch = item.getAttribute('data-type') === 'Sketch';
+        let hasWarning = item.classList.contains('health-warning')
+                      || item.classList.contains('health-error');
 
         // The 'Edit' item shows the feature's own icon, just like Fusion's
         // native "Edit <type>" entry.
@@ -768,11 +779,48 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 { separator: true },
             ];
             if (!isGroup) {
-                entries.push({ label: 'Edit', icon: editIcon,
+                entries.push({ label: isSketch ? 'Edit Sketch' : 'Edit', icon: editIcon,
                                run: () => sendFeatureAction('editFeature', id) });
-                entries.push({ label: 'Change Transparency (50% / 100%)',
-                               icon: menuIcons['toggleTranslucent'],
-                               run: () => sendFeatureAction('toggleTranslucent', id) });
+                if (isSketch) {
+                    // Sketch-only options, mirroring Fusion's browser-tree and
+                    // timeline right-click menus for a sketch. Each native command
+                    // runs only when Fusion actually offers it (the add-in reports
+                    // back otherwise). "Manage Lost Projections" / "Review warning"
+                    // are gated on the sketch carrying a warning.
+                    entries.push({ label: 'Show/Hide',
+                                   icon: menuIcons['toggleVisibility'],
+                                   run: () => sendFeatureAction('toggleVisibility', id) });
+                    entries.push({ label: 'Look At', icon: menuIcons['lookAt'],
+                                   run: () => runNativeCommand(id, 'Look At') });
+                    entries.push({ label: 'Redefine Sketch Plane',
+                                   icon: menuIcons['redefineSketchPlane'],
+                                   run: () => runNativeCommand(id, 'Redefine Sketch Plane') });
+                    entries.push({ label: 'Select Sketch Plane',
+                                   run: () => sendFeatureAction('selectSketchPlane', id) });
+                    if (hasWarning) {
+                        entries.push({ label: 'Manage Lost Projections',
+                                       icon: menuIcons['manageLostProjections'],
+                                       run: () => runNativeCommand(id, 'Manage Lost Projections') });
+                    }
+                    entries.push({ label: 'Configure', icon: menuIcons['configure'],
+                                   run: () => runNativeCommand(id, 'Configure') });
+                    entries.push({ label: 'Convert to DM Feature',
+                                   icon: menuIcons['convertToDM'],
+                                   run: () => runNativeCommand(id, 'Convert to DM Feature') });
+                    // Display toggles flip the sketch's own booleans directly.
+                    // Label tracks current state (default to shown when unknown).
+                    let eye = menuIcons['toggleVisibility'];
+                    let skLabel = (key, noun) =>
+                        (item.getAttribute('data-sk-' + key) !== '0' ? 'Hide ' : 'Show ') + noun;
+                    entries.push({ label: skLabel('profile', 'Profile'), icon: eye,
+                                   run: () => sendSketchToggle(id, 'areProfilesShown') });
+                    entries.push({ label: skLabel('dimension', 'Dimension'), icon: eye,
+                                   run: () => sendSketchToggle(id, 'areDimensionsShown') });
+                    entries.push({ label: skLabel('projected', 'Projected Geometries'), icon: eye,
+                                   run: () => sendSketchToggle(id, 'isProjectedGeometryShown') });
+                    entries.push({ label: skLabel('construction', 'Construction Geometries'), icon: eye,
+                                   run: () => sendSketchToggle(id, 'isConstructionGeometryShown') });
+                }
             }
             entries.push({ label: 'Rename', icon: menuIcons['renameFeature'],
                            run: () => startRename(item) });
@@ -787,6 +835,18 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 entries.push({ label: 'Delete all features after History Marker',
                                danger: true, icon: menuIcons['deleteFeature'],
                                run: () => send('deleteAllAfterMarker') });
+            }
+            if (!isGroup) {
+                if (hasWarning) {
+                    entries.push({ label: 'Review warning',
+                                   icon: menuIcons['reviewWarning'],
+                                   run: () => runNativeCommand(id, 'Review warning') });
+                }
+                entries.push({ separator: true });
+                entries.push({ label: 'Find in Browser',
+                               run: () => runNativeCommand(id, 'Find in Browser') });
+                entries.push({ label: 'Find in Window',
+                               run: () => runNativeCommand(id, 'Find in Window') });
             }
         }
 
@@ -837,6 +897,20 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
 
     async function sendFeatureAction(action, id) {
         let ret = await query(action, { 'id': id });
+        processCommands(ret);
+    }
+
+    // Run one of Fusion's own commands (looked up by its menu label) against the
+    // feature, mirroring the native timeline right-click items.
+    async function runNativeCommand(id, name) {
+        let ret = await query('runNativeCommand', { 'id': id, 'name': name });
+        processCommands(ret);
+    }
+
+    // Flip one of a sketch's display booleans (Profile / Dimension / Projected /
+    // Construction geometry) directly via its API property.
+    async function sendSketchToggle(id, attr) {
+        let ret = await query('toggleSketchAttr', { 'id': id, 'attr': attr });
         processCommands(ret);
     }
 
