@@ -9,6 +9,17 @@ Already shipped (v0.5.0): per-feature API-call dedup on the refresh path
 loop) and an O(1) GUI-selection highlight via an `entityToken → node id` index.
 Those items are removed from the list below.
 
+## Considered and rejected: rewrite in C++
+
+Fusion add-ins can be written in C++, but that won't speed this one up. Every slow
+operation is an API call into Fusion's own compiled kernel (`obj.entity`, icon
+resolution, timeline traversal) plus the HTML palette round-trip. A C++ add-in
+calls the same API and waits on the same kernel and palette — it only saves Python
+*dispatch* overhead (microseconds, against millisecond-plus API calls). Cost:
+full ~1600-line rewrite, drop `thomasa88lib` (Python-only), per-platform compiles
+(Windows + mac), and loss of Shift+S hot reload / `editEnabled` iteration. The real
+lever is the Tier 1–3 items below.
+
 ## Where the time goes
 
 Most command completions trigger `invalidate()` (`VerticalTimeline.py:307`) via
