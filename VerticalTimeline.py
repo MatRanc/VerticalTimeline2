@@ -889,7 +889,13 @@ def add_entity_to_collection(newSelection, entity, design):
     it can be edited), False if only its produced bodies were added (a fallback
     that allows highlighting but not editing).'''
     if isinstance(entity, adsk.fusion.Occurrence):
-        associated_component = entity.sourceComponent
+        try:
+            associated_component = entity.sourceComponent
+        except RuntimeError:
+            # A deleted/suppressed "component from bodies" occurrence has an
+            # invalid path, so sourceComponent raises InternalValidationError
+            # (path.valid()). Nothing to select - treat it as non-selectable.
+            return True
     elif isinstance(entity, adsk.fusion.ConstructionPlane):
         associated_component = entity.parent
     elif hasattr(entity, 'parentComponent'):
@@ -940,6 +946,37 @@ def get_translucent_bodies(entity):
     if parent:
         return list(parent.bRepBodies)
     return []
+
+def _delete_entity(obj):
+    '''Delete the model entity behind a (non-group) timeline object. Prefer the
+    native object - deleting an assembly-context proxy is often refused.'''
+    entity = obj.entity
+    target = getattr(entity, 'nativeObject', None) or entity
+    return target.deleteMe()
+
+def _delete_timeline_obj(obj):
+    '''Delete a non-group timeline feature. TimelineObject has no deleteMe, so we
+    delete its entity. A suppressed body->component feature has no computed
+    occurrence, so its path is unresolvable and deleteMe() raises findObjectPath;
+    unsuppress it (which recomputes the occurrence) and retry, re-suppressing if
+    the delete still fails so a failed attempt does not change the model.'''
+    try:
+        return _delete_entity(obj)
+    except RuntimeError:
+        if not obj.isSuppressed:
+            raise
+    # ponytail: unsuppress + delete are two separate undo steps (not one atomic
+    # transaction), and unsuppressing transiently recomputes the feature. Wrap
+    # in UndoManager / a timeline group if single-step undo ever matters.
+    obj.isSuppressed = False
+    try:
+        return _delete_entity(obj)
+    except RuntimeError:
+        try:
+            obj.isSuppressed = True
+        except (RuntimeError, AttributeError):
+            pass
+        raise
 
 # Event handler for the palette HTML event.
 def palette_incoming_from_html_handler(args):
@@ -1167,12 +1204,8 @@ def palette_incoming_from_html_handler(args):
                         pass
                     deleted = obj.deleteMe(choice == adsk.core.DialogResults.DialogNo)
             else:
-                entity = obj.entity
-                type_name = thomasa88lib.utils.short_class(entity)
-                # Delete the native object - deleting an assembly-context proxy
-                # (a feature shown inside a component) is often refused.
-                target = getattr(entity, 'nativeObject', None) or entity
-                deleted = target.deleteMe()
+                type_name = thomasa88lib.utils.short_class(obj.entity)
+                deleted = _delete_timeline_obj(obj)
         except (RuntimeError, AttributeError) as e:
             deleted = False
             err = str(e)
@@ -1252,9 +1285,7 @@ def palette_incoming_from_html_handler(args):
                 if obj.isGroup:
                     deleted = obj.deleteMe(False)
                 else:
-                    entity = obj.entity
-                    target = getattr(entity, 'nativeObject', None) or entity
-                    deleted = target.deleteMe()
+                    deleted = _delete_timeline_obj(obj)
             except (RuntimeError, AttributeError):
                 deleted = False
             if not deleted:
