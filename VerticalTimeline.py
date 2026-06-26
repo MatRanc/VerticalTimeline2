@@ -587,10 +587,7 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                 max_parents = group_max_parents
         else:
             # Not group
-            try:
-                entity = obj.entity
-            except RuntimeError as e:
-                entity = None
+            entity = entity_of(obj)
             
             if entity:
                 feature_type = thomasa88lib.utils.short_class(entity)
@@ -599,7 +596,7 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                 # Index the native entity's token so GUI-selection highlighting
                 # is an O(1) lookup. Best-effort: features whose token can't be
                 # read are simply not matchable, same as before.
-                native = getattr(entity, 'nativeObject', None) or entity
+                native = native_of(entity)
                 try:
                     timeline_cache_entity_index[native.entityToken] = child_node.id
                 except Exception:
@@ -1041,11 +1038,32 @@ def get_command_icon_pair(name):
         return None
     return {'light': light, 'dark': _icon_in_folder(folder, True) or light}
 
+def entity_of(obj):
+    '''obj.entity, or None when Fusion refuses access (Move/Align, groups,
+    document teardown all raise RuntimeError instead of returning the entity).'''
+    try:
+        return obj.entity
+    except RuntimeError:
+        return None
+
+def native_of(entity):
+    '''The underlying native object, or the entity itself if it has none.
+    Assembly-context proxies often refuse edits/deletes; the native does not.'''
+    return getattr(entity, 'nativeObject', None) or entity
+
+def nodes_for(data):
+    '''Valid cached nodes for a multi-select action, skipping ids that are stale
+    (gone from the rebuilt cache) or have no timeline object.'''
+    for i in data.get('ids', []):
+        node = timeline_cache_map.get(i)
+        if node and node.obj is not None:
+            yield node
+
 def _delete_entity(obj):
     '''Delete the model entity behind a (non-group) timeline object. Prefer the
     native object - deleting an assembly-context proxy is often refused.'''
     entity = obj.entity
-    target = getattr(entity, 'nativeObject', None) or entity
+    target = native_of(entity)
     return target.deleteMe()
 
 def _delete_timeline_obj(obj):
@@ -1106,11 +1124,7 @@ def palette_incoming_from_html_handler(args):
         obj = node.obj
         visible_name = None
         if data['value'] != '':
-            try:
-                entity = obj.entity
-            except RuntimeError:
-                # Move and Align does not allow us to access their entity attribute
-                entity = None
+            entity = entity_of(obj)
             if (not obj.isGroup
                 and entity
                 and entity.classType() == 'adsk::fusion::Occurrence'
@@ -1130,13 +1144,7 @@ def palette_incoming_from_html_handler(args):
 
         design: adsk.fusion.Design = app.activeProduct
 
-        try:
-            entity = obj.entity
-        except RuntimeError:
-            # Timeline groups have no associated model entity ('Associated
-            # feature is invalid.'), and some features (e.g. Move/Align) do not
-            # expose theirs. There is nothing to select in the model.
-            entity = None
+        entity = entity_of(obj)
 
         if entity is None:
             # Not an error - e.g. the user may just be clicking a group to
@@ -1191,14 +1199,8 @@ def palette_incoming_from_html_handler(args):
         # consume the rows picked here), not just the palette's row highlight.
         design = app.activeProduct
         newSelection = adsk.core.ObjectCollection.create()
-        for i in data.get('ids', []):
-            node = timeline_cache_map.get(i)
-            if not node or node.obj is None:
-                continue
-            try:
-                entity = node.obj.entity
-            except RuntimeError:
-                entity = None
+        for node in nodes_for(data):
+            entity = entity_of(node.obj)
             if entity is None:
                 continue
             try:
@@ -1233,10 +1235,7 @@ def palette_incoming_from_html_handler(args):
         # occurrences/bodies/planes, isVisible for sketches), so try both.
         node = timeline_cache_map[data['id']]
         obj = node.obj
-        try:
-            entity = obj.entity
-        except RuntimeError:
-            entity = None
+        entity = entity_of(obj)
         toggled = False
         for attr in ('isLightBulbOn', 'isVisible'):
             if entity is not None and hasattr(entity, attr):
@@ -1256,10 +1255,7 @@ def palette_incoming_from_html_handler(args):
         node = timeline_cache_map[data['id']]
         obj = node.obj
         attr = data.get('attr', '')
-        try:
-            entity = obj.entity
-        except RuntimeError:
-            entity = None
+        entity = entity_of(obj)
         if entity is not None and hasattr(entity, attr):
             try:
                 setattr(entity, attr, not getattr(entity, attr))
@@ -1272,10 +1268,7 @@ def palette_incoming_from_html_handler(args):
     elif action == 'selectSketchPlane':
         node = timeline_cache_map[data['id']]
         obj = node.obj
-        try:
-            entity = obj.entity
-        except RuntimeError:
-            entity = None
+        entity = entity_of(obj)
         plane = getattr(entity, 'referencePlane', None)
         if plane:
             sel = adsk.core.ObjectCollection.create()
@@ -1294,10 +1287,7 @@ def palette_incoming_from_html_handler(args):
         obj = node.obj
         cmd_name = data.get('name', '')
         design = app.activeProduct
-        try:
-            entity = obj.entity
-        except RuntimeError:
-            entity = None
+        entity = entity_of(obj)
         if entity is not None:
             sel = adsk.core.ObjectCollection.create()
             try:
@@ -1383,10 +1373,7 @@ def palette_incoming_from_html_handler(args):
         # Fusion groups are a contiguous timeline range, so group everything
         # between the first and last selected items (inclusive).
         indices = []
-        for i in data.get('ids', []):
-            node = timeline_cache_map.get(i)
-            if not node or node.obj is None:
-                continue
+        for node in nodes_for(data):
             try:
                 indices.append(node.obj.index)
             except (RuntimeError, AttributeError):
@@ -1405,10 +1392,7 @@ def palette_incoming_from_html_handler(args):
     elif action == 'suppressFeatures':
         suppress = data.get('suppress', True)
         failures = 0
-        for i in data.get('ids', []):
-            node = timeline_cache_map.get(i)
-            if not node or node.obj is None:
-                continue
+        for node in nodes_for(data):
             try:
                 node.obj.isSuppressed = suppress
             except (RuntimeError, AttributeError):
@@ -1419,8 +1403,7 @@ def palette_incoming_from_html_handler(args):
                 f'Could not {verb} {failures} of the selected items.'))
         html_commands.append(invalidate(send=False))
     elif action == 'deleteFeatures':
-        nodes = [timeline_cache_map.get(i) for i in data.get('ids', [])]
-        nodes = [n for n in nodes if n and n.obj is not None]
+        nodes = list(nodes_for(data))
 
         # Delete later items first, so deleting one does not invalidate the
         # timeline positions of the others.
@@ -1541,7 +1524,7 @@ def find_node_id_for_entity(native, token):
             continue
         if entity is None:
             continue
-        node_native = getattr(entity, 'nativeObject', None) or entity
+        node_native = native_of(entity)
         if node_native == native:
             return node.id
         try:
@@ -1572,7 +1555,7 @@ def active_selection_changed_handler(args):
             entity = selection.entity
             if entity is None:
                 continue
-            native = getattr(entity, 'nativeObject', None) or entity
+            native = native_of(entity)
             try:
                 token = native.entityToken
             except Exception:
