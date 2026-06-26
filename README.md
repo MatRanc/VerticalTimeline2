@@ -71,6 +71,14 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 * v 0.7.4
   * The timeline now keeps its scroll position per document, so switching files
     (and plain refreshes) returns you to where you were instead of the top.
+  * Sketch rows gain the native right-click actions (Edit Sketch, Redefine
+    Sketch Plane, and related items) in the timeline menu (#6, #7).
+  * Fixed missing/placeholder icons for several timeline features (#8).
+  * Selecting or deleting a suppressed *Body -> Component* feature from the
+    timeline no longer fails.
+  * The *Group Delete* popup can delete the group together with its contents
+    without throwing (#5).
+  * Occurrence rows show the correct pin, cut-paste, and body-to-component icons.
 * v 0.7.3
   * The *Toggle Translucency* context-menu item is now *Change Transparency
     (50% / 100%)* with a cube icon, matching the standalone ChangeTransparency
