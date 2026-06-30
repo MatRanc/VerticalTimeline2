@@ -68,6 +68,13 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Changelog
 
+* v 0.7.5
+  * Fixed a multi-second freeze when starting a camera pan/orbit in large
+    assemblies. The GUI-selection row highlight was running a per-feature lookup
+    scan on every viewport selection; large timelines now match via the fast
+    index only and skip the scan (#9).
+  * Redundant timeline refreshes from rapid command bursts are coalesced into a
+    single refresh.
 * v 0.7.4
   * The timeline now keeps its scroll position per document, so switching files
     (and plain refreshes) returns you to where you were instead of the top.

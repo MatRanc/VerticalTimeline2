@@ -97,7 +97,7 @@ HIGHLIGHT_GUI_SELECTION = True
 # it freezes large assemblies — it ran on every viewport selection (e.g. the
 # geometry picked at the start of a pan), the issue-#9 freeze. Past the cap we
 # highlight via the O(1) token index only.
-FALLBACK_SCAN_MAX_NODES = 250
+FALLBACK_SCAN_MAX_NODES = 250  # ponytail: unmeasured guess; lower if a file near this size still lags on selection
 
 settings = thomasa88lib.settings.SettingsManager(
     { 'enabled': False }
