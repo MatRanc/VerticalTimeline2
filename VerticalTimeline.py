@@ -113,6 +113,18 @@ TIMELINE_STATUS_OK = 0
 TIMELINE_STATUS_PRODUCT_NOT_READY = 1
 TIMELINE_STATUS_NOT_PARAMETRIC = 2
 
+# Camera/navigation commands that fire commandTerminated but never change the
+# timeline. FreeOrbitCommand + PanCommand confirmed on macOS via trace (issue #9);
+# the rest are the standard Fusion view ids. Extend from a trace if a navigation
+# gesture still triggers a refresh.
+NAV_COMMAND_IDS = {
+    'FreeOrbitCommand', 'OrbitCommand', 'PanCommand',
+    'ZoomCommand', 'FitCommand',
+}
+# Commands command_terminated_handler ignores: navigation (above) plus the
+# selection/commit chatter that doesn't alter the timeline either.
+SKIP_REFRESH_COMMAND_IDS = NAV_COMMAND_IDS | {'SelectCommand', 'CommitCommand'}
+
 def find_commands(substring):
     return [c.id for c in ui.commandDefinitions if substring in c.id.lower()]
 
@@ -1070,13 +1082,13 @@ def command_terminated_handler(args):
     # Helper to trace feature images
     #trace_feature_image(eventArgs)
 
-    # Heavy traffic commands that never change the timeline. Camera navigation
-    # belongs here too, but its command ids vary by platform/version — trace
-    # eventArgs.commandId (see trace hook above), then add the confirmed ids
-    # (e.g. 'PanCommand', 'OrbitCommand', 'ZoomCommand', 'FitCommand', ViewCube)
-    # below. This is an optimization; the debounce in schedule_refresh() is what
-    # actually prevents the freeze if a navigation id is missed here.
-    if eventArgs.commandId in ['SelectCommand', 'CommitCommand']:
+    # Commands that never change the timeline. Camera navigation MUST be skipped
+    # here: on macOS/Windows it fires commandTerminated on every orbit/pan release
+    # (it fires nothing on some builds — why the freeze only hit certain machines,
+    # issue #9), and a full timeline rebuild costs ~10s on a 600-node design. The
+    # debounce can't save it — the rebuild itself is the freeze, so we never start
+    # it. Add any other navigation id a trace turns up to NAV_COMMAND_IDS.
+    if eventArgs.commandId in SKIP_REFRESH_COMMAND_IDS:
         return
 
     schedule_refresh()
