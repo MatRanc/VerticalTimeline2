@@ -92,6 +92,13 @@ def refresh_event_handler(args):
 # Best-effort: matching is based on entity identity. Set to False to disable.
 HIGHLIGHT_GUI_SELECTION = True
 
+# Cap for the live-entity highlight fallback (find_node_id_for_entity). That
+# fallback does an obj.entity API call per timeline node; above this many nodes
+# it freezes large assemblies — it ran on every viewport selection (e.g. the
+# geometry picked at the start of a pan), the issue-#9 freeze. Past the cap we
+# highlight via the O(1) token index only.
+FALLBACK_SCAN_MAX_NODES = 250
+
 settings = thomasa88lib.settings.SettingsManager(
     { 'enabled': False }
 )
@@ -1181,11 +1188,12 @@ def active_selection_changed_handler(args):
             except Exception:
                 continue
             node_id = timeline_cache_entity_index.get(token)
-            if node_id is None:
+            if node_id is None and len(timeline_cache_map) <= FALLBACK_SCAN_MAX_NODES:
                 # Fusion entityTokens can differ between the access at refresh
                 # time (obj.entity) and selection time, so the prebuilt index can
                 # miss. Fall back to comparing the selected entity against each
-                # node's live entity, both read in this same moment.
+                # node's live entity, both read in this same moment. Capped: the
+                # per-node obj.entity scan freezes large assemblies (issue #9).
                 node_id = find_node_id_for_entity(native, token)
             if node_id is not None:
                 selected_ids.append(node_id)
