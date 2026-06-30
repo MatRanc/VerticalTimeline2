@@ -56,6 +56,38 @@ html_ready = False
 timeline_item_count = 0
 timeline_marker_position = -1
 
+# Debounce for the command-terminated refresh. commandTerminated fires in bursts
+# (a camera pan/orbit gesture fires it repeatedly), and each invalidate() is a
+# full O(N) timeline rebuild + DOM teardown — so a burst freezes large
+# assemblies (issue #9). Collapse the burst into one refresh after activity
+# settles. threading.Timer runs on a worker thread where the Fusion API is
+# off-limits, so the timer only fires a custom event that marshals back to the
+# main thread (refresh_event_handler) to do the real work.
+REFRESH_EVENT_ID = 'thomasa88_verticalTimeline_refresh'
+DEBOUNCE_SECONDS = 0.1
+_refresh_timer = None
+_refresh_lock = threading.Lock()
+
+def schedule_refresh():
+    # ponytail: 100ms trailing debounce; collapses commandTerminated bursts
+    # (pan/orbit) into one refresh. Raise DEBOUNCE_SECONDS if it still stutters,
+    # lower it if the refresh feels laggy.
+    global _refresh_timer
+    with _refresh_lock:
+        if _refresh_timer:
+            _refresh_timer.cancel()
+        _refresh_timer = threading.Timer(DEBOUNCE_SECONDS, _fire_refresh)
+        _refresh_timer.start()
+
+def _fire_refresh():
+    # Worker thread — only marshal to the main thread, no API calls here.
+    app.fireCustomEvent(REFRESH_EVENT_ID)
+
+def refresh_event_handler(args):
+    # Main thread. invalidate() already guards on palette/html_ready, so a fire
+    # that lands after the palette closed is harmless.
+    invalidate()
+
 # Highlight the timeline row matching the feature selected in Fusion's GUI.
 # Best-effort: matching is based on entity identity. Set to False to disable.
 HIGHLIGHT_GUI_SELECTION = True
@@ -420,19 +452,6 @@ def get_active_workspace_id():
     except RuntimeError:
         return None
 
-def check_timeline():
-    global timeline_item_count
-    global timeline_marker_position
-    global html_ready
-    timeline_status, timeline = thomasa88lib.timeline.get_timeline()
-    if timeline_status == TIMELINE_STATUS_OK:
-        if (timeline.count != timeline_item_count or
-            timeline.markerPosition != timeline_marker_position):
-            invalidate()
-    else:
-        timeline_item_count = -1
-        timeline_marker_position = -1
-
 def run(context):
     global ui, app
     debug = False
@@ -466,6 +485,11 @@ def run(context):
         events_manager.add_handler(ui.commandTerminated,
                     adsk.core.ApplicationCommandEventHandler,
                     command_terminated_handler)
+
+        # Custom event used to debounce command_terminated_handler back onto the
+        # main thread (see schedule_refresh).
+        refresh_event = events_manager.register_event(REFRESH_EVENT_ID)
+        events_manager.add_handler(refresh_event, callback=refresh_event_handler)
 
         # Edit command tracing
         # def f(args):
@@ -503,6 +527,9 @@ def run(context):
 def stop(context):
     with error_catcher:
         print('Stopping')
+
+        if _refresh_timer:
+            _refresh_timer.cancel()
 
         events_manager.clean_up()
 
@@ -1036,11 +1063,16 @@ def command_terminated_handler(args):
     # Helper to trace feature images
     #trace_feature_image(eventArgs)
 
-    # Heavy traffic commands
+    # Heavy traffic commands that never change the timeline. Camera navigation
+    # belongs here too, but its command ids vary by platform/version — trace
+    # eventArgs.commandId (see trace hook above), then add the confirmed ids
+    # (e.g. 'PanCommand', 'OrbitCommand', 'ZoomCommand', 'FitCommand', ViewCube)
+    # below. This is an optimization; the debounce in schedule_refresh() is what
+    # actually prevents the freeze if a navigation id is missed here.
     if eventArgs.commandId in ['SelectCommand', 'CommitCommand']:
         return
-    
-    invalidate()
+
+    schedule_refresh()
 
 def trace_feature_image(command_terminated_event_args):
     ''' Development function to trace feature images '''

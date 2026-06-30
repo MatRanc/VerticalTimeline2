@@ -9,6 +9,13 @@ Already shipped (v0.5.0): per-feature API-call dedup on the refresh path
 loop) and an O(1) GUI-selection highlight via an `entityToken → node id` index.
 Those items are removed from the list below.
 
+Also shipped: **#6 below (debounce)** plus a navigation skip-list, fixing the
+issue-#9 freeze where a camera pan/orbit gesture fired `commandTerminated`
+repeatedly and each one ran a full rebuild. `command_terminated_handler` now
+calls `schedule_refresh()` (a 100 ms trailing debounce that marshals back to the
+main thread via a custom event) instead of `invalidate()` directly, so a burst
+of commands collapses into one refresh.
+
 ## Considered and rejected: rewrite in C++
 
 Fusion add-ins can be written in C++, but that won't speed this one up. Every slow
@@ -89,11 +96,9 @@ path shipped in v0.5.0; neither does a full rebuild.
    only when the feature set actually changes (consider keyed diffing later).
    File: `palette.html`.
 
-6. **Coalesce/debounce `invalidate()`.** `command_terminated_handler` can fire in
-   bursts; defer + collapse rapid invalidations into one refresh (Fusion pattern:
-   post a custom event + pending flag — note the existing "cannot sendInfoToHTML
-   inside the event handler" constraint). Medium complexity; optional. Files:
-   `command_terminated_handler`, `invalidate`.
+6. **Coalesce/debounce `invalidate()`.** ✅ Shipped (see top). A 100 ms trailing
+   `threading.Timer` in `schedule_refresh()` collapses bursts; the timer fires a
+   custom event so `invalidate()` runs back on the main thread.
 
 ## Recommended order
 
