@@ -61,10 +61,42 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   rows do get the correct icon.) There is no API workaround; the issue is left
   open in case a future Fusion release exposes the type.
 
-## TODO
+* **Large designs (roughly 1000+ timeline nodes) are slow to edit**
+  ([#10](https://github.com/MatRanc/VerticalTimeline2/issues/10)). Every real
+  edit rebuilds the palette, which reads the whole timeline out of Fusion one
+  object at a time (`Timeline.item(i)` — there is no bulk accessor). On a
+  ~1450-node design that is ~6 s per edit, and Fusion is frozen while it runs
+  because the API must be called on the main thread. Adds (extrude, fillet, …)
+  pay it in full, since a new feature genuinely changes the timeline. See the
+  wishlist below.
 
-* Improve performance further for very large files. See
-  [PERFORMANCE.md](PERFORMANCE.md) for the prioritized backlog.
+## Performance and wishlist
+
+Ongoing backlog: [PERFORMANCE.md](PERFORMANCE.md). The big refresh cost above
+comes down to one thing — reading the timeline object-by-object — and there are
+two ways to attack it:
+
+* **A bulk timeline accessor in the Fusion API (this one needs Autodesk, and
+  would be the real fix).** `Timeline` exposes only `.count` and `.item(index)`,
+  so reading an N-object timeline costs N API round-trips (~4 ms each → ~6 s at
+  ~1450 objects). A single call returning the whole timeline as an array — a
+  `Timeline.asArray()` / `allItems`, like many other Fusion collections already
+  provide — would turn that into one round-trip. *If you work on the Fusion API
+  team: please add this.* A "timeline changed" event carrying the delta would be
+  even better.
+
+* **Incremental refresh (doable in the add-in, deliberately not shipped yet).**
+  After an edit we still hold every timeline wrapper from the previous refresh,
+  and they survive Fusion's recompute (verified). For a state-only edit
+  (suppress / roll / rename) the set and order are unchanged, so the ~6 s
+  re-materialization can be skipped entirely — reuse the held wrappers and
+  re-read only the changed state (measured ~6 s → ~0.7 s). Even an add creates
+  just one new object, so in principle the ~1450 survivors could be reused and
+  only the new one materialized (~0.9 s). What blocks shipping it is doing this
+  *safely on grouped timelines*: Fusion returns `index == -1` for anything inside
+  a collapsed group, so there is no cheap, reliable way to tell an in-group
+  add/reorder from a no-op — guess wrong and the palette shows a stale or
+  incorrect timeline. The fragility, not the feasibility, is why it is shelved.
 
 ## Changelog
 
