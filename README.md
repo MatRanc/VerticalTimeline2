@@ -107,6 +107,10 @@ two ways to attack it:
     index only and skip the scan (#9).
   * Redundant timeline refreshes from rapid command bursts are coalesced into a
     single refresh.
+  * Timeline refresh is faster on large designs: the timeline is now read by
+    index (`.item(i)`) instead of Python iteration, trimming ~30% off the
+    timeline walk (~8.8s -> ~5.8s on a 1452-node design). Both timelines and
+    groups behave identically (#10).
 * v 0.7.4
   * The timeline now keeps its scroll position per document, so switching files
     (and plain refreshes) returns you to where you were instead of the top.
