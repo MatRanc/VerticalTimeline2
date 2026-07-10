@@ -702,27 +702,87 @@ def _delete_entity(obj):
 
 def _delete_timeline_obj(obj):
     '''Delete a non-group timeline feature. TimelineObject has no deleteMe, so we
-    delete its entity. A suppressed body->component feature has no computed
+    delete its entity. A broken/suppressed body->component row has no computed
     occurrence, so its path is unresolvable and deleteMe() raises findObjectPath;
-    unsuppress it (which recomputes the occurrence) and retry, re-suppressing if
-    the delete still fails so a failed attempt does not change the model.'''
+    force a recompute (end unsuppressed) and retry, restoring the original
+    suppression state if the delete still fails so a failed attempt does not
+    change the model.'''
     try:
         return _delete_entity(obj)
     except RuntimeError:
-        if not obj.isSuppressed:
+        # Only a broken/suppressed row (unresolvable occurrence path) can be
+        # rescued by the recompute below. A healthy feature that refuses to
+        # delete - e.g. one needed by a later feature - should surface as-is,
+        # not get its suppression pointlessly toggled.
+        try:
+            broken = obj.isSuppressed or obj.healthState in (
+                adsk.fusion.FeatureHealthStates.ErrorFeatureHealthState,
+                adsk.fusion.FeatureHealthStates.WarningFeatureHealthState)
+        except (RuntimeError, AttributeError):
+            broken = False
+        if not broken:
             raise
-    # ponytail: unsuppress + delete are two separate undo steps (not one atomic
-    # transaction), and unsuppressing transiently recomputes the feature. Wrap
-    # in UndoManager / a timeline group if single-step undo ever matters.
-    obj.isSuppressed = False
+    # ponytail: recompute + delete are two separate undo steps (not one atomic
+    # transaction), and the recompute transiently rebuilds the feature. Wrap in
+    # UndoManager / a timeline group if single-step undo ever matters.
+    original = obj.isSuppressed
     try:
+        if original:
+            obj.isSuppressed = False          # unsuppress -> recompute the path
+        else:
+            obj.isSuppressed = True            # a broken but unsuppressed row:
+            obj.isSuppressed = False           # toggle to force the recompute
         return _delete_entity(obj)
     except RuntimeError:
         try:
-            obj.isSuppressed = True
+            obj.isSuppressed = original
         except (RuntimeError, AttributeError):
             pass
         raise
+
+def _collect_group_contents(node):
+    '''Split a group node's descendants into (leaf feature nodes, sub-group
+    nodes). Sub-groups come out deepest-first so their now-empty shells can be
+    removed inner-to-outer. Uses the already-materialized TimelineObjectNode tree
+    so no timeline re-walk is needed.'''
+    leaves, groups = [], []
+    def walk(n):
+        for child in n.children:
+            if child.obj is not None and child.obj.isGroup:
+                walk(child)
+                groups.append(child)   # after its children -> deepest-first
+            else:
+                leaves.append(child)
+    walk(node)
+    return leaves, groups
+
+def _delete_group_contents(node):
+    '''Delete a timeline group AND its contents. Route each contained feature
+    through _delete_timeline_obj - which handles broken body->component rows that
+    Fusion's native recursive deleteMe(True) mishandles - then drop the emptied
+    group shell(s).'''
+    leaves, groups = _collect_group_contents(node)
+    def _index(n):
+        try:
+            return n.obj.index
+        except (RuntimeError, AttributeError):
+            return -1
+    # Delete later items first so removing one does not shift the timeline index
+    # of the others (same ordering as the multi-select delete below).
+    # ponytail: raises on the first content that refuses to delete (e.g. needed
+    # by a later feature outside the group), leaving a partial delete. Caller
+    # reports it; whole-group atomicity isn't worth an UndoManager transaction.
+    for leaf in sorted(leaves, key=_index, reverse=True):
+        _delete_timeline_obj(leaf.obj)
+    # Contents gone; remove the emptied wrapper(s), innermost first. An emptied
+    # group may have auto-vanished already - swallow that.
+    for g in groups + [node]:
+        try:
+            g.obj.isCollapsed = True
+            g.obj.deleteMe(False)
+        except (RuntimeError, AttributeError):
+            pass
+    return True
 
 # Event handler for the palette HTML event.
 def palette_incoming_from_html_handler(args):
@@ -970,17 +1030,24 @@ def palette_incoming_from_html_handler(args):
                     adsk.core.MessageBoxIconTypes.QuestionIconType)
                 if choice == adsk.core.DialogResults.DialogCancel:
                     deleted = True  # user backed out; nothing failed
+                elif choice == adsk.core.DialogResults.DialogNo:
+                    # Delete group + contents. Route each contained feature
+                    # through _delete_timeline_obj instead of Fusion's native
+                    # deleteMe(True): the native recursive delete mishandles a
+                    # broken body->component row inside the group (issue: group
+                    # delete "sometimes works, sometimes doesn't").
+                    deleted = _delete_group_contents(node)
                 else:
-                    # deleteMe acts on the group as a single collapsed timeline
-                    # unit; an expanded group has no timeline index, so
-                    # deleteMe(True) throws. The palette can show a group that is
-                    # still expanded in Fusion, so collapse it first (same
-                    # workaround as rollToFeature above).
+                    # Delete group, keep/expand its contents. deleteMe acts on the
+                    # group as a single collapsed timeline unit; an expanded group
+                    # has no timeline index, so deleteMe throws. The palette can
+                    # show a group still expanded in Fusion, so collapse it first
+                    # (same workaround as rollToFeature above).
                     try:
                         obj.isCollapsed = True
                     except (RuntimeError, AttributeError):
                         pass
-                    deleted = obj.deleteMe(choice == adsk.core.DialogResults.DialogNo)
+                    deleted = obj.deleteMe(False)
             else:
                 type_name = thomasa88lib.utils.short_class(obj.entity)
                 deleted = _delete_timeline_obj(obj)
