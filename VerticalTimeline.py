@@ -1031,23 +1031,17 @@ def palette_incoming_from_html_handler(args):
                 if choice == adsk.core.DialogResults.DialogCancel:
                     deleted = True  # user backed out; nothing failed
                 elif choice == adsk.core.DialogResults.DialogNo:
-                    # Delete group + contents. Prefer Fusion's native
-                    # deleteMe(True): it's one atomic, fast operation and a single
-                    # Ctrl+Z restores the whole group. It only chokes on a broken
-                    # body->component row inside the group (issue: group delete
-                    # "sometimes works, sometimes doesn't"), so fall back to
-                    # deleting each contained feature individually - slower and
-                    # multi-step undo - only when the native delete fails.
-                    try:
-                        obj.isCollapsed = True
-                    except (RuntimeError, AttributeError):
-                        pass
-                    try:
-                        deleted = obj.deleteMe(True)
-                    except (RuntimeError, AttributeError):
-                        deleted = False
-                    if not deleted:
-                        deleted = _delete_group_contents(node)
+                    # Delete group + contents. Fusion's native deleteMe(True) can
+                    # silently no-op here: when the contents have downstream
+                    # dependents it would need the "permanently delete features"
+                    # confirmation, which the API can't show, so it reports success
+                    # without deleting. Delete each contained feature individually
+                    # instead - it actually removes them (and handles a broken
+                    # body->component row native chokes on). Ceiling: this is N
+                    # separate operations, so it recomputes per feature (slow on
+                    # big groups) and takes N undo steps rather than one; Fusion's
+                    # scripting API exposes no way to batch them atomically.
+                    deleted = _delete_group_contents(node)
                 else:
                     # Delete group, keep/expand its contents. deleteMe acts on the
                     # group as a single collapsed timeline unit; an expanded group

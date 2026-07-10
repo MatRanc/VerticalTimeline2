@@ -105,11 +105,13 @@ two ways to attack it:
     instead of failing (it previously tried to remove the component). The
     delete-recovery that already handled *suppressed* such rows now also covers
     rows in an error/warning state.
-  * *Delete group and its contents* is reliable again. It still uses Fusion's
-    fast, single-undo native delete (which choked on a broken body-to-component
-    feature inside the group, so the group "sometimes deleted, sometimes did
-    not"); only when that native delete fails does it fall back to removing each
-    contained feature individually.
+  * *Delete group and its contents* is reliable again. Fusion's native group
+    delete silently did nothing when the contents had downstream dependents (it
+    needs a confirmation the API can't show) and also choked on a broken
+    body-to-component row, so the group "sometimes deleted, sometimes did not".
+    Each contained feature is now removed individually. Note: this is slower on
+    large groups and takes multiple undo steps, since the scripting API can't
+    batch the deletes into one atomic operation.
 * v 0.7.6
   * Emboss, Derive, Rule Fillet, solid Delete Face, and Construction Axis/Point
     now show their real icon instead of the generic placeholder.
