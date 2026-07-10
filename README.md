@@ -70,6 +70,21 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   pay it in full, since a new feature genuinely changes the timeline. See the
   wishlist below.
 
+* **Deleting a group whose contents feed later features fails from the add-in.**
+  When a group's features have downstream dependents, Fusion refuses the delete
+  through the API: `TimelineGroup.deleteMe(true)` silently does nothing and
+  per-feature `deleteMe()` returns `false` — there is no force-delete variant in
+  the API (only a plain `deleteMe` and `deleteAllAfterMarker`). The native
+  timeline can force it, but only behind a *"permanently delete features — may
+  cause downstream issues"* confirmation dialog that the API cannot display. The
+  add-in now reports "could not delete (needed by later features)" instead of
+  freezing and silently doing nothing; groups **without** downstream dependents
+  delete normally. Workaround: delete such a group from Fusion's own timeline.
+  Wishlist for Autodesk: a `deleteMe(force)` / dependent-aware delete, or an API
+  hook to the native confirmation. (Even when the delete does go through the
+  add-in, it is N separate operations, so it takes N undo steps rather than one —
+  the scripting API has no way to batch them atomically.)
+
 ## Performance and wishlist
 
 Ongoing backlog: [PERFORMANCE.md](PERFORMANCE.md). The big refresh cost above
