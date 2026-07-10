@@ -100,7 +100,7 @@ HIGHLIGHT_GUI_SELECTION = True
 FALLBACK_SCAN_MAX_NODES = 250  # ponytail: unmeasured guess; lower if a file near this size still lags on selection
 
 settings = thomasa88lib.settings.SettingsManager(
-    { 'enabled': False }
+    { 'enabled': True }
 )
 
 def get_enabled():
@@ -1152,7 +1152,7 @@ def palette_incoming_from_html_handler(args):
 # Set True to log every terminated command (id / reason / resourceFolder) to
 # ~/vt_cmd_trace.log. Use it to confirm which command ids a machine fires during
 # camera navigation, then extend NAV_COMMAND_IDS if the /camera/ skip missed one.
-TRACE_COMMANDS = False
+TRACE_COMMANDS = True  # temporary: capturing the joint-drive command id
 
 def _is_navigation_command(eventArgs):
     # Build-independent nav skip: camera commands (orbit/pan/zoom/fit/look-at)
