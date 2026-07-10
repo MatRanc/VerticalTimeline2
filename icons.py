@@ -168,6 +168,18 @@ FEATURE_RESOURCE_MAP = {
     'Canvas': ('Fusion/UI/FusionUI/Resources/Image/AddCanvas', ''),
     'CopyPasteBody': ('Fusion/UI/FusionUI/Resources/Assembly/CopyPasteBodies', ''),
 
+    # More features that surface in the timeline but weren't mapped, so they
+    # showed the finishX placeholder. Icons verified on disk; icon only, no edit
+    # wiring yet. # ponytail: icon only, no edit wiring yet.
+    'EmbossFeature': ('Fusion/UI/FusionUI/Resources/Modeling/Emboss', ''),
+    'RuleFilletFeature': ('Fusion/UI/FusionUI/Resources/solid/rulefillet', ''),  # distinct from FilletFeature
+    'DeleteFaceFeature': ('Fusion/UI/FusionUI/Resources/Modeling/DeleteFaces', ''),  # solid delete-face, vs SurfaceDeleteFaceFeature
+    'DeriveFeature': ('Fusion/UI/FusionUI/Resources/Derive/CloneWM', ''),  # insert-derive (see comment block below)
+    # Construction axis/point: one representative glyph (like the plane fallback).
+    # A per-definition map + edit ids (cf. PLANE_RESOURCE_MAP) is the upgrade path.
+    'ConstructionAxis': ('Fusion/UI/FusionUI/Resources/construction/axis_line', ''),
+    'ConstructionPoint': ('Fusion/UI/FusionUI/Resources/construction/point_center', ''),
+
     # Bug: https://forums.autodesk.com/t5/fusion-360-api-and-scripts/api-bug-cannot-access-entity-of-quot-move-quot-feature/m-p/9651921
     # '2 : InternalValidationError : res': 'Fusion/UI/FusionSheetMetalUI/Resources/Flange',
     # '2 : InternalValidationError : res': 'Fusion/UI/FusionSheetMetalUI/Resources/Bend',

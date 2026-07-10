@@ -1070,6 +1070,23 @@ def palette_incoming_from_html_handler(args):
     if html_commands:
         htmlArgs.returnData = json.dumps(html_commands)
 
+# Set True to log every terminated command (id / reason / resourceFolder) to
+# ~/vt_cmd_trace.log. Use it to confirm which command ids a machine fires during
+# camera navigation, then extend NAV_COMMAND_IDS if the /camera/ skip missed one.
+TRACE_COMMANDS = False
+
+def _is_navigation_command(eventArgs):
+    # Build-independent nav skip: camera commands (orbit/pan/zoom/fit/look-at)
+    # live under the Neutron .../Resources/Camera/ tree regardless of their id,
+    # which varies by build (issue #9 — the id list alone missed Windows nav
+    # commands). resourceFolder is read the same way trace_feature_image() does,
+    # so this API is known-good; empty/None -> not treated as navigation.
+    try:
+        folder = eventArgs.commandDefinition.resourceFolder or ''
+    except Exception:
+        return False
+    return '/camera/' in folder.lower()
+
 def command_terminated_handler(args):
     eventArgs = adsk.core.ApplicationCommandEventArgs.cast(args)
 
@@ -1079,16 +1096,22 @@ def command_terminated_handler(args):
         eventArgs.commandId != 'UndoCommand'):
         return
 
-    # Helper to trace feature images
-    #trace_feature_image(eventArgs)
+    if TRACE_COMMANDS:
+        try:
+            with open(os.path.expanduser('~/vt_cmd_trace.log'), 'a') as f:
+                folder = eventArgs.commandDefinition.resourceFolder or ''
+                f.write(f'{eventArgs.commandId}\t{eventArgs.terminationReason}\t{folder}\n')
+        except Exception:
+            pass
 
     # Commands that never change the timeline. Camera navigation MUST be skipped
     # here: on macOS/Windows it fires commandTerminated on every orbit/pan release
     # (it fires nothing on some builds — why the freeze only hit certain machines,
     # issue #9), and a full timeline rebuild costs ~10s on a 600-node design. The
     # debounce can't save it — the rebuild itself is the freeze, so we never start
-    # it. Add any other navigation id a trace turns up to NAV_COMMAND_IDS.
-    if eventArgs.commandId in SKIP_REFRESH_COMMAND_IDS:
+    # it. The id set is a cheap fast-path; _is_navigation_command catches nav
+    # commands whose id varies by build (the Windows stutter).
+    if eventArgs.commandId in SKIP_REFRESH_COMMAND_IDS or _is_navigation_command(eventArgs):
         return
 
     schedule_refresh()

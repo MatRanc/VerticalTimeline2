@@ -100,6 +100,15 @@ two ways to attack it:
 
 ## Changelog
 
+* v 0.7.6
+  * Emboss, Derive, Rule Fillet, solid Delete Face, and Construction Axis/Point
+    now show their real icon instead of the generic placeholder.
+  * Reduced remaining camera-navigation stutter on Windows: orbit/pan/zoom
+    commands are now skipped by their resource type, not just a fixed list of
+    ids (which varies by build), so a navigation command never triggers a
+    timeline rebuild (#9).
+  * Still-unmapped feature icons (sheet-metal, mesh-editing, and volumetric
+    features) remain a known gap.
 * v 0.7.5
   * Fixed a multi-second freeze when starting a camera pan/orbit in large
     assemblies. The GUI-selection row highlight was running a per-feature lookup
