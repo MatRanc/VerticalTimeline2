@@ -105,13 +105,15 @@ two ways to attack it:
     instead of failing (it previously tried to remove the component). The
     delete-recovery that already handled *suppressed* such rows now also covers
     rows in an error/warning state.
-  * *Delete group and its contents* is reliable again. Fusion's native group
-    delete silently did nothing when the contents had downstream dependents (it
-    needs a confirmation the API can't show) and also choked on a broken
-    body-to-component row, so the group "sometimes deleted, sometimes did not".
-    Each contained feature is now removed individually. Note: this is slower on
-    large groups and takes multiple undo steps, since the scripting API can't
-    batch the deletes into one atomic operation.
+  * *Delete group and its contents* no longer silently does nothing. It now
+    removes each contained feature individually and, when Fusion refuses to
+    delete one because it has downstream dependents, reports that instead of
+    freezing and quietly leaving the group in place. Deleting a group whose
+    contents feed later features is still a Fusion API limitation (the scripting
+    API can't show the "may cause downstream issues" confirmation that the native
+    timeline uses to force such deletes) - use the native timeline delete for
+    those. Individual deletes are also slower on large groups and take multiple
+    undo steps, since the API can't batch them atomically.
 * v 0.7.6
   * Emboss, Derive, Rule Fillet, solid Delete Face, and Construction Axis/Point
     now show their real icon instead of the generic placeholder.

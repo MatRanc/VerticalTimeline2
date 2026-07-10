@@ -769,20 +769,27 @@ def _delete_group_contents(node):
             return -1
     # Delete later items first so removing one does not shift the timeline index
     # of the others (same ordering as the multi-select delete below).
-    # ponytail: raises on the first content that refuses to delete (e.g. needed
-    # by a later feature outside the group), leaving a partial delete. Caller
-    # reports it; whole-group atomicity isn't worth an UndoManager transaction.
+    all_ok = True
     for leaf in sorted(leaves, key=_index, reverse=True):
-        _delete_timeline_obj(leaf.obj)
-    # Contents gone; remove the emptied wrapper(s), innermost first. An emptied
-    # group may have auto-vanished already - swallow that.
+        # deleteMe() returns False (no exception) for a feature Fusion refuses to
+        # delete because it has downstream dependents - the API cannot show the
+        # "may cause downstream issues" confirmation the native timeline delete
+        # uses to force it. Track that so we report failure instead of silently
+        # claiming success (which looked like "freezes, then nothing happens").
+        try:
+            if not _delete_timeline_obj(leaf.obj):
+                all_ok = False
+        except (RuntimeError, AttributeError):
+            all_ok = False
+    # Remove the emptied wrapper(s), innermost first. An emptied group may have
+    # auto-vanished already - swallow that.
     for g in groups + [node]:
         try:
             g.obj.isCollapsed = True
             g.obj.deleteMe(False)
         except (RuntimeError, AttributeError):
             pass
-    return True
+    return all_ok
 
 # Event handler for the palette HTML event.
 def palette_incoming_from_html_handler(args):
