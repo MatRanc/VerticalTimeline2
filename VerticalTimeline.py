@@ -1031,12 +1031,23 @@ def palette_incoming_from_html_handler(args):
                 if choice == adsk.core.DialogResults.DialogCancel:
                     deleted = True  # user backed out; nothing failed
                 elif choice == adsk.core.DialogResults.DialogNo:
-                    # Delete group + contents. Route each contained feature
-                    # through _delete_timeline_obj instead of Fusion's native
-                    # deleteMe(True): the native recursive delete mishandles a
-                    # broken body->component row inside the group (issue: group
-                    # delete "sometimes works, sometimes doesn't").
-                    deleted = _delete_group_contents(node)
+                    # Delete group + contents. Prefer Fusion's native
+                    # deleteMe(True): it's one atomic, fast operation and a single
+                    # Ctrl+Z restores the whole group. It only chokes on a broken
+                    # body->component row inside the group (issue: group delete
+                    # "sometimes works, sometimes doesn't"), so fall back to
+                    # deleting each contained feature individually - slower and
+                    # multi-step undo - only when the native delete fails.
+                    try:
+                        obj.isCollapsed = True
+                    except (RuntimeError, AttributeError):
+                        pass
+                    try:
+                        deleted = obj.deleteMe(True)
+                    except (RuntimeError, AttributeError):
+                        deleted = False
+                    if not deleted:
+                        deleted = _delete_group_contents(node)
                 else:
                     # Delete group, keep/expand its contents. deleteMe acts on the
                     # group as a single collapsed timeline unit; an expanded group
