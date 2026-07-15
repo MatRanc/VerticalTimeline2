@@ -24,9 +24,9 @@ platforms** even though the absolute paths look nothing alike. Examples that
 already rely on this: `Timeline/RollFwd`, `Timeline/GroupFeature`,
 `modify/delete` (the Delete red X).
 
-## Two resource trees: Fusion vs Neutron
+## Resource trees: Fusion, Neutron, ParaMesh
 
-Built-in icons come from two different libraries:
+Built-in icons come from several different libraries:
 
 - **Fusion** tree — `Fusion/UI/FusionUI/Resources/…`. Reachable directly from the
   deploy-folder base on both platforms (see above).
@@ -38,9 +38,20 @@ Built-in icons come from two different libraries:
   | Windows  | `Neutron/UI/…` |
   | macOS    | `../../Neutron/Neutron/UI/…` (note: doubled `Neutron`, and `../../` to climb out of `Applications/Fusion`) |
 
-Because of this split, Neutron icons are looked up with a **candidate list** that
-includes both layouts, and the first one that exists wins. See
-`SKETCH_FULLY_CONSTRAINED_RES` in `VerticalTimeline.py` and the
+- **ParaMesh** tree — the Mesh-workspace icons (Repair, Remesh, face groups, …),
+  again outside the deploy base with a per-platform location:
+
+  | Platform | ParaMesh subpath to pass to `get_image_path` |
+  |----------|----------------------------------------------|
+  | Windows  | `ParaMesh/UI/ParaMeshUI/Resources/Icons/<Name>` |
+  | macOS    | `../ParaMesh/UI/ParaMeshUI/Resources/Icons/<Name>` (sibling of `Applications/Fusion`) |
+
+  See the `_paramesh()` helper in `icons.py`. (macOS layout verified on disk;
+  the Windows layout follows the Neutron pattern.)
+
+Because of this split, Neutron and ParaMesh icons are looked up with a
+**candidate list** that includes both layouts, and the first one that exists
+wins. See `SKETCH_FULLY_CONSTRAINED_RES` in `VerticalTimeline.py` and the
 `get_first_image_path()` helper.
 
 ## Filenames (theme-split icons)

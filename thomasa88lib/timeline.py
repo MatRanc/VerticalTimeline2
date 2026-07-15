@@ -56,10 +56,14 @@ def get_timeline():
     else:
         return (TIMELINE_STATUS_NOT_PARAMETRIC, None)
 
-def flatten_timeline(timeline_collection):
+def flatten_timeline(timeline_collection, _in_group=False):
     '''
     A flat timeline representation, with all objects except any group objects.
     (Groups disappear when expanded - The icon is no longer there in the timeline.)
+
+    Returns (obj, native_index) pairs. native_index is what TimelineObject.index
+    would report — the top-level position, or -1 inside a collapsed group — but
+    read for free from the iteration position instead of an API call per node.
     '''
     flat_collection = []
 
@@ -76,9 +80,9 @@ def flatten_timeline(timeline_collection):
             # what is literally shown in the timeline control in Fusion.
 
             # Flatten the group
-            flat_collection += flatten_timeline(obj)
+            flat_collection += flatten_timeline(obj, _in_group=True)
         else:
-            flat_collection.append(obj)
+            flat_collection.append((obj, -1 if _in_group else i))
 
     return flat_collection
 

@@ -15,11 +15,14 @@ Unpack it into `API\AddIns` (see [How to install an add-in or script in Fusion 3
 
 Make sure the directory is named `VerticalTimeline`, with no suffix.
 
-Once installed, turn the timeline on with *File* -> *View* -> *Toggle Vertical Timeline*.
+Once installed, the timeline opens automatically whenever a Design is active.
 
 ## Usage
 
-The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
+The timeline opens by itself. Closing it with its window *X* hides it for the
+rest of the session; it comes back on the next Fusion start (or after
+reloading the add-in). To turn it off for good, disable the add-in in the
+*Scripts and Add-ins* dialog (*Shift+S*).
 
 * Click an item to select it (this also selects it in the Fusion GUI).
 * Double-click the name to rename it; double-click anywhere else on the row to
@@ -37,10 +40,13 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
   command such as *Mirror* on those features. Right-click to *Create Group* or
   *Suppress*/*Delete* them together.
 
-Selecting a feature in the Fusion GUI also highlights the matching row in the
-timeline. Items that Fusion reports as errored or warned are highlighted red or
-yellow, with the message shown on hover. A fully constrained sketch shows
-Fusion's own lock-badge sketch icon.
+Selecting a feature in the Fusion GUI (in the native timeline or the browser)
+also highlights the matching row in the timeline. Clicking *geometry* in the
+viewport does not: Fusion reports the selection as a face/edge, and its API
+exposes no way to find the feature that created it (see Known limitations).
+Items that Fusion reports as errored or warned are highlighted red or yellow,
+with the message shown on hover. A fully constrained sketch shows Fusion's own
+lock-badge sketch icon.
 
 The palette shows its own context menu rather than Fusion's native timeline
 menu. Some native entries — *Create Selection Set*, *Configure*, *Find in
@@ -51,6 +57,15 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Known limitations
 
+* **Clicking geometry in the viewport does not highlight the creating
+  feature's row** ([#14](https://github.com/MatRanc/VerticalTimeline2/issues/14)).
+  A viewport click selects a `BRepFace`/`BRepEdge`, and the Fusion API has no
+  link from a face back to the feature that created it. Scanning every
+  feature's face list instead would take seconds per click (API calls are
+  ~10 ms each), i.e. the issue-#9 freeze again. Selecting the feature itself —
+  a native-timeline row, or a sketch/plane/component in the browser — does
+  highlight the row.
+
 * **A few feature types show a generic placeholder icon instead of their real
   one** ([#8](https://github.com/MatRanc/VerticalTimeline2/issues/8)). Fusion's
   API hands some features back only as the generic base `Feature` class — with
@@ -59,7 +74,10 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   some *Scale* features, and *Modify* features. (Note Fusion is inconsistent:
   the *same* feature kind sometimes comes through with its real type, so most
   rows do get the correct icon.) There is no API workaround; the issue is left
-  open in case a future Fusion release exposes the type.
+  open in case a future Fusion release exposes the type. Any row that falls
+  back to the placeholder now logs one line to the *Text Commands* console
+  (`no icon resolved for feature type '…'`), which tells apart "Fusion hid the
+  type" (`'Feature'`) from "a real type is missing an icon mapping".
 
 * **Large designs (roughly 1000+ timeline nodes) are slow to edit**
   ([#10](https://github.com/MatRanc/VerticalTimeline2/issues/10)). Every real
@@ -69,6 +87,21 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   because the API must be called on the main thread. Adds (extrude, fillet, …)
   pay it in full, since a new feature genuinely changes the timeline. See the
   wishlist below.
+
+* **Deleting a group whose contents feed later features fails from the add-in.**
+  When a group's features have downstream dependents, Fusion refuses the delete
+  through the API: `TimelineGroup.deleteMe(true)` silently does nothing and
+  per-feature `deleteMe()` returns `false` — there is no force-delete variant in
+  the API (only a plain `deleteMe` and `deleteAllAfterMarker`). The native
+  timeline can force it, but only behind a *"permanently delete features — may
+  cause downstream issues"* confirmation dialog that the API cannot display. The
+  add-in now reports "could not delete (needed by later features)" instead of
+  freezing and silently doing nothing; groups **without** downstream dependents
+  delete normally. Workaround: delete such a group from Fusion's own timeline.
+  Wishlist for Autodesk: a `deleteMe(force)` / dependent-aware delete, or an API
+  hook to the native confirmation. (Even when the delete does go through the
+  add-in, it is N separate operations, so it takes N undo steps rather than one —
+  the scripting API has no way to batch them atomically.)
 
 ## Performance and wishlist
 
@@ -100,6 +133,33 @@ two ways to attack it:
 
 ## Changelog
 
+* v 0.7.8
+  * The palette is now shown by default. Fresh installs auto-show the timeline;
+    existing users keep whatever they last chose. Closing it with the window X
+    hides it for the session only - it returns on the next Fusion start or
+    add-in reload. To turn the add-in off for good, use Fusion's
+    Scripts and Add-Ins dialog (Shift+S) (#11).
+  * Removed the redundant Toggle menu item - the palette's own show/hide now
+    covers it (#11).
+  * Selection highlighting is now driven by the feature's timeline position
+    instead of a per-feature entity scan, so highlighting a selected row is
+    faster and more reliable on large designs (#14).
+  * Mesh-editing features (from the ParaMesh tree) now show their real icons
+    instead of the generic placeholder.
+* v 0.7.7
+  * Deleting a broken/yellow *Create Components from Bodies* row now removes it
+    instead of failing (it previously tried to remove the component). The
+    delete-recovery that already handled *suppressed* such rows now also covers
+    rows in an error/warning state.
+  * *Delete group and its contents* no longer silently does nothing. It now
+    removes each contained feature individually and, when Fusion refuses to
+    delete one because it has downstream dependents, reports that instead of
+    freezing and quietly leaving the group in place. Deleting a group whose
+    contents feed later features is still a Fusion API limitation (the scripting
+    API can't show the "may cause downstream issues" confirmation that the native
+    timeline uses to force such deletes) - use the native timeline delete for
+    those. Individual deletes are also slower on large groups and take multiple
+    undo steps, since the API can't batch them atomically.
 * v 0.7.6
   * Emboss, Derive, Rule Fillet, solid Delete Face, and Construction Axis/Point
     now show their real icon instead of the generic placeholder.
