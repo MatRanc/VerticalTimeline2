@@ -80,6 +80,13 @@ def get_plane_res(i):
         match = None
     return match or PLANE_FALLBACK_RES
 
+# Mesh-editing icons live in the ParaMesh library — a sibling of the Fusion
+# tree, like Neutron, with the same macOS/Windows path split (docs/ICONS.md).
+def _paramesh(name):
+    return ([f'../ParaMesh/UI/ParaMeshUI/Resources/Icons/{name}',  # macOS bundle
+             f'ParaMesh/UI/ParaMeshUI/Resources/Icons/{name}'],    # Windows webdeploy
+            '')
+
 FEATURE_RESOURCE_MAP = {
     # This list is hand-crafted. Please respect the work put into this list and
     # retain the Copyright and License stanzas if you copy it.
@@ -165,6 +172,18 @@ FEATURE_RESOURCE_MAP = {
     # is wanted later. # ponytail: icon only, no edit wiring yet.
     'MeshFeature': ('Fusion/UI/FusionUI/Resources/Mesh/MeshBody', ''),
     'MeshConvertFeature': ('Fusion/UI/FusionUI/Resources/Mesh/Convert', ''),
+    # Mesh-editing features (#13). Icon only, no edit wiring yet.
+    'MeshRepairFeature': _paramesh('ParaMeshRepair'),
+    'MeshRemeshFeature': _paramesh('ParaMeshRemesh'),
+    'MeshReduceFeature': _paramesh('ParaMeshReduce'),
+    'MeshGenerateFaceGroupsFeature': _paramesh('ParaMeshCalculateFaceGroups'),
+    'MeshCombineFaceGroupsFeature': _paramesh('ParaMeshMergeFaceGroups'),
+    'MeshCombineFeature': _paramesh('ParaMeshCombine'),
+    'MeshRemoveFeature': _paramesh('ParaMeshRemove'),
+    'MeshReverseNormalFeature': _paramesh('ParaMeshReverseNormals'),
+    'MeshSeparateFeature': _paramesh('ParaMeshSeparate'),
+    'MeshShellFeature': _paramesh('ParaMeshHollow'),
+    'MeshSmoothFeature': _paramesh('ParaMeshSmooth'),
     'Canvas': ('Fusion/UI/FusionUI/Resources/Image/AddCanvas', ''),
     'CopyPasteBody': ('Fusion/UI/FusionUI/Resources/Assembly/CopyPasteBodies', ''),
 
@@ -209,6 +228,11 @@ def get_first_image_path(subpaths, dark=False):
             return path
     return None
 
+# Feature types already reported as unresolved (finishX fallback), so the
+# Text Commands console gets one line per type per session, not one per row
+# per refresh. Makes every finishX sighting self-identifying (#8/#12/#13).
+_no_icon_reported = set()
+
 def get_feature_image(obj, entity=None, fusion_type=None):
     '''(light, dark) icon paths so the palette can match its current theme.'''
     match = get_feature_res(obj, entity, fusion_type)
@@ -227,6 +251,11 @@ def get_feature_image(obj, entity=None, fusion_type=None):
             # Image not mapped, or the mapped resource does not exist in this
             # Fusion version. Fall back to a generic placeholder.
             image = get_image_path(UNKNOWN_FEATURE_IMAGE, dark)
+            key = fusion_type or '?'
+            if key not in _no_icon_reported:
+                _no_icon_reported.add(key)
+                print(f"Vertical Timeline: no icon resolved for feature type "
+                      f"'{key}' (mapped: {match is not None})")
         return image
 
     return resolve(False), resolve(True)
