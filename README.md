@@ -15,11 +15,14 @@ Unpack it into `API\AddIns` (see [How to install an add-in or script in Fusion 3
 
 Make sure the directory is named `VerticalTimeline`, with no suffix.
 
-Once installed, turn the timeline on with *File* -> *View* -> *Toggle Vertical Timeline*.
+Once installed, the timeline opens automatically whenever a Design is active.
 
 ## Usage
 
-The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
+The timeline opens by itself. Closing it with its window *X* hides it for the
+rest of the session; it comes back on the next Fusion start (or after
+reloading the add-in). To turn it off for good, disable the add-in in the
+*Scripts and Add-ins* dialog (*Shift+S*).
 
 * Click an item to select it (this also selects it in the Fusion GUI).
 * Double-click the name to rename it; double-click anywhere else on the row to
@@ -37,10 +40,13 @@ The timeline is shown using *File* -> *View* -> *Toggle Vertical Timeline*.
   command such as *Mirror* on those features. Right-click to *Create Group* or
   *Suppress*/*Delete* them together.
 
-Selecting a feature in the Fusion GUI also highlights the matching row in the
-timeline. Items that Fusion reports as errored or warned are highlighted red or
-yellow, with the message shown on hover. A fully constrained sketch shows
-Fusion's own lock-badge sketch icon.
+Selecting a feature in the Fusion GUI (in the native timeline or the browser)
+also highlights the matching row in the timeline. Clicking *geometry* in the
+viewport does not: Fusion reports the selection as a face/edge, and its API
+exposes no way to find the feature that created it (see Known limitations).
+Items that Fusion reports as errored or warned are highlighted red or yellow,
+with the message shown on hover. A fully constrained sketch shows Fusion's own
+lock-badge sketch icon.
 
 The palette shows its own context menu rather than Fusion's native timeline
 menu. Some native entries — *Create Selection Set*, *Configure*, *Find in
@@ -51,6 +57,15 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Known limitations
 
+* **Clicking geometry in the viewport does not highlight the creating
+  feature's row** ([#14](https://github.com/MatRanc/VerticalTimeline2/issues/14)).
+  A viewport click selects a `BRepFace`/`BRepEdge`, and the Fusion API has no
+  link from a face back to the feature that created it. Scanning every
+  feature's face list instead would take seconds per click (API calls are
+  ~10 ms each), i.e. the issue-#9 freeze again. Selecting the feature itself —
+  a native-timeline row, or a sketch/plane/component in the browser — does
+  highlight the row.
+
 * **A few feature types show a generic placeholder icon instead of their real
   one** ([#8](https://github.com/MatRanc/VerticalTimeline2/issues/8)). Fusion's
   API hands some features back only as the generic base `Feature` class — with
@@ -59,7 +74,10 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   some *Scale* features, and *Modify* features. (Note Fusion is inconsistent:
   the *same* feature kind sometimes comes through with its real type, so most
   rows do get the correct icon.) There is no API workaround; the issue is left
-  open in case a future Fusion release exposes the type.
+  open in case a future Fusion release exposes the type. Any row that falls
+  back to the placeholder now logs one line to the *Text Commands* console
+  (`no icon resolved for feature type '…'`), which tells apart "Fusion hid the
+  type" (`'Feature'`) from "a real type is missing an icon mapping".
 
 * **Large designs (roughly 1000+ timeline nodes) are slow to edit**
   ([#10](https://github.com/MatRanc/VerticalTimeline2/issues/10)). Every real

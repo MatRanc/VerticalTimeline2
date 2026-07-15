@@ -29,7 +29,6 @@ FILE_DIR = os.path.dirname(os.path.realpath(__file__))
 from .thomasa88lib import utils
 from .thomasa88lib import events
 from .thomasa88lib import timeline
-from .thomasa88lib import settings
 from .thomasa88lib import manifest
 from .thomasa88lib import error
 
@@ -38,7 +37,6 @@ import importlib
 importlib.reload(thomasa88lib)
 importlib.reload(thomasa88lib.events)
 importlib.reload(thomasa88lib.timeline)
-importlib.reload(thomasa88lib.settings)
 importlib.reload(thomasa88lib.manifest)
 importlib.reload(thomasa88lib.error)
 
@@ -99,15 +97,11 @@ HIGHLIGHT_GUI_SELECTION = True
 # highlight via the O(1) token index only.
 FALLBACK_SCAN_MAX_NODES = 250  # ponytail: unmeasured guess; lower if a file near this size still lags on selection
 
-settings = thomasa88lib.settings.SettingsManager(
-    { 'enabled': True }
-)
-
-def get_enabled():
-    return settings['enabled']
-
-def set_enabled(value):
-    settings['enabled'] = value
+# The palette is on by default (#11); closing it with the window X hides it
+# for this session only — the next Fusion start / add-in reload brings it back.
+# Turning the add-in off for good is Fusion's Scripts-and-Add-Ins dialog
+# (Shift+S), not an add-in setting.
+palette_closed_by_user = False
 
 TIMELINE_STATUS_OK = 0
 TIMELINE_STATUS_PRODUCT_NOT_READY = 1
@@ -206,6 +200,9 @@ class TimelineObjectNode:
     def __init__(self, obj, id):
         self.obj = obj
         self.id = id
+        # The object's TimelineObject.index (-1 for groups/collapsed-group
+        # members), taken for free from the flatten iteration position.
+        self.timeline_index = -1
         self.children = []
 
 timeline_cache_tree = None
@@ -214,11 +211,20 @@ timeline_cache_map = None
 # entity. Lets active_selection_changed_handler map a GUI selection to a row
 # with an O(1) lookup instead of an obj.entity API call per node on every click.
 timeline_cache_entity_index = {}
+# TimelineObject.index -> node id. Second O(1) selection-highlight route:
+# entityToken strings are documented as non-stable (the same entity can yield
+# different strings on different reads), so the token index can miss; the
+# timeline position cannot drift within one cache generation.
+timeline_cache_position_index = {}
 def get_features(timeline):
     global timeline_cache_tree, timeline_cache_map
     flat_timeline = thomasa88lib.timeline.flatten_timeline(timeline)
     timeline_cache_tree, timeline_cache_map = build_timeline_tree(flat_timeline)
     timeline_cache_entity_index.clear()
+    timeline_cache_position_index.clear()
+    timeline_cache_position_index.update(
+        (node.timeline_index, node.id)
+        for node in timeline_cache_map.values() if node.timeline_index >= 0)
 
     component_parent_map = get_component_parent_map()
     design = app.activeProduct
@@ -426,8 +432,9 @@ def build_timeline_tree(flat_timeline):
         parent_node.children.append(group_node)
         return group_node
     
-    for obj in flat_timeline:
+    for obj, native_index in flat_timeline:
         node = new_node(obj)
+        node.timeline_index = native_index
         parent_obj = obj.parentGroup
         if parent_obj != in_node.obj:
             in_node = get_group_node(parent_obj)
@@ -478,29 +485,6 @@ def run(context):
         app = adsk.core.Application.get()
         ui = app.userInterface
 
-        # Add a command that displays the palette
-        toggle_palette_cmd_def = ui.commandDefinitions.itemById('thomasa88_showVerticalTimeline')
-
-        if not toggle_palette_cmd_def:
-            toggle_palette_cmd_def = ui.commandDefinitions.addButtonDefinition(
-                'thomasa88_showVerticalTimeline',
-                'Toggle Vertical Timeline',
-                'Vertical Timeline\n\n' +
-                'A vertical timeline, that shows feature names. Timeline functionality is limited.',
-                './resources/verticaltimeline')
-
-            events_manager.add_handler(toggle_palette_cmd_def.commandCreated,
-                        adsk.core.CommandCreatedEventHandler,
-                        toggle_palette_command_created_handler)
-        
-        # Add the command to the View menu
-        view_drop_down = get_view_drop_down()
-        
-        cntrl = view_drop_down.controls.itemById('thomasa88_showVerticalTimeline')
-        if not cntrl:
-            view_drop_down.controls.addCommand(toggle_palette_cmd_def,
-                                               'SeparatorAfter_DashboardModeCloseCommand', False) 
-        
         events_manager.add_handler(ui.commandTerminated,
                     adsk.core.ApplicationCommandEventHandler,
                     command_terminated_handler)
@@ -540,7 +524,7 @@ def run(context):
         print("Running")
 
         # Show palette when user starts the add-in manually
-        if get_enabled() and app.isStartupComplete:
+        if app.isStartupComplete:
             show_palette()
 
 def stop(context):
@@ -557,7 +541,8 @@ def stop(context):
         if palette:
             palette.deleteMe()
 
-        # Delete controls and associated command definitions created by this add-ins
+        # The Toggle menu command was removed in #11; keep deleting any control/
+        # command definition a previously-running version left behind.
         view_drop_down = get_view_drop_down()
         cntrl = view_drop_down.controls.itemById('thomasa88_showVerticalTimeline')
         if cntrl:
@@ -565,18 +550,6 @@ def stop(context):
         cmdDef = ui.commandDefinitions.itemById('thomasa88_showVerticalTimeline')
         if cmdDef:
             cmdDef.deleteMe()
-
-def toggle_palette_command_execute_handler(args):
-    enable = not get_enabled()
-    set_enabled(enable)
-    if enable:
-        if get_active_workspace_id() == 'FusionSolidEnvironment':
-            show_palette()
-        else:
-            ui.messageBox('Vertical Timeline cannot be shown in this workspace. ' +
-                        'It will be shown when you open a Design.')
-    else:
-        hide_palette()
 
 def show_palette():
     global html_ready
@@ -612,16 +585,10 @@ def hide_palette():
     if palette:
         palette.isVisible = False
 
-# Event handler for the commandCreated event.
-def toggle_palette_command_created_handler(args):
-    command = args.command
-    events_manager.add_handler(command.execute,
-                                adsk.core.CommandEventHandler,
-                                toggle_palette_command_execute_handler)
-
 # Event handler for the palette close event.
 def palette_closed_handler(args):
-    set_enabled(False)
+    global palette_closed_by_user
+    palette_closed_by_user = True
 
 def add_entity_to_collection(newSelection, entity, design):
     '''Add a timeline feature's entity (with its assembly-context proxies) to a
@@ -1227,14 +1194,14 @@ def trace_feature_image(command_terminated_event_args):
 
 def workspace_pre_deactivate_handler(args):
     #eventArgs = adsk.core.DocumentEventArgs.cast(args)
-    if get_enabled():
+    if not palette_closed_by_user:
         invalidate(clear=True)
 
 def workspace_activated_handler(args):
     #eventArgs = adsk.core.WorkspaceEventArgs.cast(args)
 
     if get_active_workspace_id() == 'FusionSolidEnvironment':
-        if get_enabled():
+        if not palette_closed_by_user:
             show_palette()
     else:
         # Deactivate
@@ -1243,7 +1210,7 @@ def workspace_activated_handler(args):
 def document_activated_handler(args):
     #eventArgs = adsk.core.DocumentEventArgs.cast(args)
     if get_active_workspace_id() == 'FusionSolidEnvironment':
-        if get_enabled():
+        if not palette_closed_by_user:
             show_palette()
 
 def find_node_id_for_entity(native, token):
@@ -1275,18 +1242,25 @@ def find_node_id_for_entity(native, token):
             pass
     return None
 
+# Set True to log every GUI selection (entity class / which lookup matched) to
+# ~/vt_selection_trace.log. Use it to see what Fusion actually delivers for a
+# viewport click (issue #14): geometry clicks select a BRepFace/BRepEdge, which
+# the public API cannot map back to the feature that created it.
+TRACE_SELECTION = False
+
 def active_selection_changed_handler(args):
     '''Highlight the timeline row(s) matching the feature selected in Fusion's GUI.
 
-    Best-effort: each selected entity's native token is looked up in the index
-    built at refresh time, so this stays O(selected) instead of an obj.entity
-    API call per timeline node. Anything that fails is swallowed so the user's
-    selection flow is never disturbed.'''
+    Best-effort, O(selected): each selected entity is matched via the token
+    index built at refresh time, then via its TimelineObject.index (tokens are
+    documented as non-stable strings, the timeline position is not), and only
+    then via the capped per-node scan. Anything that fails is swallowed so the
+    user's selection flow is never disturbed.'''
     if not HIGHLIGHT_GUI_SELECTION:
         return
 
     palette = ui.palettes.itemById('thomasa88_verticalTimelinePalette')
-    if not palette or not palette.isVisible or not html_ready or not timeline_cache_entity_index:
+    if not palette or not palette.isVisible or not html_ready or not timeline_cache_map:
         return
 
     selected_ids = []
@@ -1297,18 +1271,41 @@ def active_selection_changed_handler(args):
             if entity is None:
                 continue
             native = native_of(entity)
+            node_id = None
+            token = None
+            matched_by = 'none'
             try:
                 token = native.entityToken
+                node_id = timeline_cache_entity_index.get(token)
+                matched_by = 'token'
             except Exception:
-                continue
-            node_id = timeline_cache_entity_index.get(token)
+                pass
+            if node_id is None:
+                # Timeline entities (features, sketches, planes, occurrences)
+                # expose their TimelineObject; its index is an O(1) key into the
+                # position map at any design size. BRep geometry has no
+                # timelineObject and skips through. index is -1 inside a
+                # collapsed group — never in the map, so it misses cleanly.
+                try:
+                    node_id = timeline_cache_position_index.get(
+                        native.timelineObject.index)
+                    matched_by = 'position'
+                except Exception:
+                    pass
             if node_id is None and len(timeline_cache_map) <= FALLBACK_SCAN_MAX_NODES:
-                # Fusion entityTokens can differ between the access at refresh
-                # time (obj.entity) and selection time, so the prebuilt index can
-                # miss. Fall back to comparing the selected entity against each
-                # node's live entity, both read in this same moment. Capped: the
+                # Last resort: compare the selected entity against each node's
+                # live entity, both read in this same moment. Capped: the
                 # per-node obj.entity scan freezes large assemblies (issue #9).
                 node_id = find_node_id_for_entity(native, token)
+                matched_by = 'scan'
+            if node_id is None:
+                matched_by = 'none'
+            if TRACE_SELECTION:
+                try:
+                    with open(os.path.expanduser('~/vt_selection_trace.log'), 'a') as f:
+                        f.write(f'{entity.classType()}\t{matched_by}\t{node_id}\n')
+                except Exception:
+                    pass
             if node_id is not None:
                 selected_ids.append(node_id)
     except Exception:
