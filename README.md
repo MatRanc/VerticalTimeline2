@@ -133,6 +133,11 @@ two ways to attack it:
 
 ## Changelog
 
+* v 0.7.9
+  * Fixed the stutter when dragging/rotating a jointed component. Each drag
+    release fires `FusionDragComponentsCommand`, which is kinematic and never
+    changes the timeline, but it was triggering a full palette rebuild anyway;
+    it's now skipped like the other selection/commit chatter.
 * v 0.7.8
   * The palette is now shown by default. Fresh installs auto-show the timeline;
     existing users keep whatever they last chose. Closing it with the window X
