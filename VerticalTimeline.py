@@ -1119,7 +1119,7 @@ def palette_incoming_from_html_handler(args):
 # Set True to log every terminated command (id / reason / resourceFolder) to
 # ~/vt_cmd_trace.log. Use it to confirm which command ids a machine fires during
 # camera navigation, then extend NAV_COMMAND_IDS if the /camera/ skip missed one.
-TRACE_COMMANDS = True  # temporary: capturing the joint-drive command id
+TRACE_COMMANDS = False  # dev-only: flip True to capture command ids to ~/vt_cmd_trace.log
 
 def _is_navigation_command(eventArgs):
     # Build-independent nav skip: camera commands (orbit/pan/zoom/fit/look-at)

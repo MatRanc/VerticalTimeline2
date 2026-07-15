@@ -133,6 +133,19 @@ two ways to attack it:
 
 ## Changelog
 
+* v 0.7.8
+  * The palette is now shown by default. Fresh installs auto-show the timeline;
+    existing users keep whatever they last chose. Closing it with the window X
+    hides it for the session only - it returns on the next Fusion start or
+    add-in reload. To turn the add-in off for good, use Fusion's
+    Scripts and Add-Ins dialog (Shift+S) (#11).
+  * Removed the redundant Toggle menu item - the palette's own show/hide now
+    covers it (#11).
+  * Selection highlighting is now driven by the feature's timeline position
+    instead of a per-feature entity scan, so highlighting a selected row is
+    faster and more reliable on large designs (#14).
+  * Mesh-editing features (from the ParaMesh tree) now show their real icons
+    instead of the generic placeholder.
 * v 0.7.7
   * Deleting a broken/yellow *Create Components from Bodies* row now removes it
     instead of failing (it previously tried to remove the component). The
