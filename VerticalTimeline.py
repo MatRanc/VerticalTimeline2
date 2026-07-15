@@ -117,7 +117,12 @@ NAV_COMMAND_IDS = {
 }
 # Commands command_terminated_handler ignores: navigation (above) plus the
 # selection/commit chatter that doesn't alter the timeline either.
-SKIP_REFRESH_COMMAND_IDS = NAV_COMMAND_IDS | {'SelectCommand', 'CommitCommand'}
+# FusionDragComponentsCommand fires on every joint-drag release (there is no
+# separate drive-joint id — confirmed by trace, 2026-07-15); the drag is
+# kinematic and never creates a timeline object itself (Capture Position
+# arrives as its own command), so skipping it kills the per-drag rebuild.
+SKIP_REFRESH_COMMAND_IDS = NAV_COMMAND_IDS | {
+    'SelectCommand', 'CommitCommand', 'FusionDragComponentsCommand'}
 
 def find_commands(substring):
     return [c.id for c in ui.commandDefinitions if substring in c.id.lower()]
