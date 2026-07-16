@@ -88,16 +88,16 @@ v0.5.0; neither does a full rebuild.
    next full refresh, not instantly. Files: `marker_fastpath_command` /
    `rollToFeature` handler (`VerticalTimeline.py`); `applyMarker`
    (`palette.html`).
-   **Observed result (2026-07-15, large design):** helps, but rolls are still
-   not instant. The palette rebuild is skipped on this path, so the remaining
-   latency is elsewhere — the two candidates are (a) Fusion's own recompute
-   when the marker moves (kernel work, not fixable from the add-in) and
-   (b) a `commandTerminated` fired by the roll itself, which would run the
-   debounced *full* refresh ~100 ms later anyway. Flip `TRACE_COMMANDS = True`
-   and roll once to tell them apart: if a command id shows up in
-   `~/vt_cmd_trace.log`, adding a targeted skip for palette-initiated rolls
-   recovers the rest; if the log stays empty, the wait is Fusion's recompute
-   and this item is as fast as it can get.
+   **Observed result (2026-07-15, large design):** the in-place update alone
+   helped but rolls were still not instant. `~/vt_cmd_trace.log` shows why:
+   every marker roll terminates a `FusionRollCommand` (completed), so the
+   debounced *full* refresh ran ~100 ms after the in-place update anyway.
+   Fixed: the `rollToFeature` handler arms a one-shot 2 s window and
+   `command_terminated_handler` consumes exactly one `FusionRollCommand`
+   inside it; native-timeline rolls arrive outside the window and refresh
+   normally. Needs a retest on a large design — any slowness left after this
+   is Fusion's own recompute when the marker moves (kernel work, not fixable
+   from the add-in).
 
 ## Tier 2 — server-side, low risk
 

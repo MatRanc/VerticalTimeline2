@@ -88,12 +88,11 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   pay it in full, since a new feature genuinely changes the timeline. Rolling
   the marker *from the palette* (context menu or marker-bar drag) no longer
   pays the palette rebuild: the rolled-back rows are computed from the cached
-  timeline and updated in place. In practice that makes rolls on a large
-  design noticeably faster but still not instant — the remaining wait is
-  outside the palette (Fusion's own recompute when the marker moves, and any
-  follow-up refresh a Fusion-fired command triggers). Rolls made on Fusion's
-  own timeline, and suppress/edit operations, still trigger the full rebuild.
-  See the wishlist below.
+  timeline and updated in place, and the roll's own `FusionRollCommand` no
+  longer triggers a follow-up full rebuild. Any wait left on a palette roll is
+  Fusion's own recompute when the marker moves, which no add-in can skip.
+  Rolls made on Fusion's own timeline, and suppress/edit operations, still
+  trigger the full rebuild. See the wishlist below.
 
 * **Deleting a group whose contents feed later features fails from the add-in.**
   When a group's features have downstream dependents, Fusion refuses the delete
@@ -135,9 +134,9 @@ two ways to attack it:
   only the new one materialized (~0.9 s). The *safe subset* is shipped: for
   palette-initiated rolls the add-in knows exactly what changed (only the
   marker), so it computes the rolled-back rows from the held wrappers with no
-  API reads at all and updates the rows in place. (Testing on a large design:
-  this helps, but rolls are still not instant — the palette rebuild is gone
-  from that path, so the rest of the wait is Fusion-side.) What blocks the general
+  API reads at all and updates the rows in place (and eats the one
+  `FusionRollCommand` the roll itself fires, which used to redo the full
+  rebuild ~100 ms later — see PERFORMANCE.md #2). What blocks the general
   version is doing this *safely on grouped timelines for external edits*:
   Fusion returns `index == -1` for anything inside a collapsed group, so there
   is no cheap, reliable way to tell an in-group add/reorder from a no-op —
@@ -146,6 +145,21 @@ two ways to attack it:
 
 ## Changelog
 
+* v 0.7.10
+  * Rolling the history marker from the palette (right-click → *Roll Timeline
+    Marker Here*, or dragging the marker bar) no longer rebuilds the whole
+    palette. The rolled-back rows are computed from the cached timeline and
+    updated in place, and the `FusionRollCommand` the roll itself fires no
+    longer triggers a follow-up full rebuild (rolls made on Fusion's native
+    timeline still refresh normally). Any remaining wait on a palette roll is
+    Fusion's own recompute of the design (#10).
+  * The component parent map behind the colored parent bars is cached across
+    refreshes and rebuilt when the timeline count or document changes, instead
+    of walking every occurrence on each refresh. Renaming or reparenting a
+    component may show stale bars until the next add/delete (#10).
+  * Palette row events (click / double-click / context menu) are attached once
+    to the timeline container instead of three listeners per row on every
+    rebuild (#10).
 * v 0.7.9
   * Fixed the stutter when dragging/rotating a jointed component. Each drag
     release fires `FusionDragComponentsCommand`, which is kinematic and never

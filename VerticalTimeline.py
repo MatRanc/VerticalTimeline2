@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import threading
+import time
 
 NAME = 'Vertical Timeline'
 FILE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -123,6 +124,18 @@ NAV_COMMAND_IDS = {
 # arrives as its own command), so skipping it kills the per-drag rebuild.
 SKIP_REFRESH_COMMAND_IDS = NAV_COMMAND_IDS | {
     'SelectCommand', 'CommitCommand', 'FusionDragComponentsCommand'}
+
+# A palette-initiated roll already updates the palette in place
+# (marker_fastpath_command), but the rollTo() itself terminates a
+# FusionRollCommand (confirmed in ~/vt_cmd_trace.log, 2026-07-15), which would
+# trigger the very full rebuild the fast path just avoided. Consume exactly one
+# FusionRollCommand shortly after our own roll; rolls made on Fusion's native
+# timeline arrive outside the window and still refresh normally.
+# ponytail: one-shot 2s window, not per-command-instance tracking — a native
+# roll landing inside an unconsumed window would be missed once; track command
+# instances if that ever bites.
+ROLL_COMMAND_ID = 'FusionRollCommand'
+_own_roll_deadline = 0.0
 
 def find_commands(substring):
     return [c.id for c in ui.commandDefinitions if substring in c.id.lower()]
@@ -968,6 +981,10 @@ def palette_incoming_from_html_handler(args):
             # marker only ever sit before/after the group).
             obj.parentGroup.isCollapsed = False
         rolled_ok = obj.rollTo(False)
+        if rolled_ok:
+            # Arm the one-shot skip for the FusionRollCommand this roll fires.
+            global _own_roll_deadline
+            _own_roll_deadline = time.monotonic() + 2.0
         html_commands.append(rolled_ok)
         # A successful roll takes the in-place fast path (see
         # marker_fastpath_command); anything unexpected falls back to the full
@@ -1235,6 +1252,13 @@ def command_terminated_handler(args):
     # it. The id set is a cheap fast-path; _is_navigation_command catches nav
     # commands whose id varies by build (the Windows stutter).
     if eventArgs.commandId in SKIP_REFRESH_COMMAND_IDS or _is_navigation_command(eventArgs):
+        return
+
+    # Our own palette roll: the palette is already up to date (fast path), so
+    # eat this one command instead of redoing the full rebuild.
+    global _own_roll_deadline
+    if eventArgs.commandId == ROLL_COMMAND_ID and time.monotonic() < _own_roll_deadline:
+        _own_roll_deadline = 0.0
         return
 
     schedule_refresh()
