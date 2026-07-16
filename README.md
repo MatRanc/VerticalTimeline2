@@ -114,17 +114,18 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 ## Performance and wishlist
 
 Ongoing backlog: [PERFORMANCE.md](PERFORMANCE.md). The big refresh cost above
-comes down to one thing — reading the timeline object-by-object — and there are
-two ways to attack it:
+comes down to one thing — reading the timeline object-by-object. Of the two
+ways to attack it, the second is now shipped; the first needs Autodesk:
 
-* **A bulk timeline accessor in the Fusion API (this one needs Autodesk, and
-  would be the real fix).** `Timeline` exposes only `.count` and `.item(index)`,
-  so reading an N-object timeline costs N API round-trips (~4 ms each → ~6 s at
-  ~1450 objects). A single call returning the whole timeline as an array — a
-  `Timeline.asArray()` / `allItems`, like many other Fusion collections already
-  provide — would turn that into one round-trip. *If you work on the Fusion API
-  team: please add this.* A "timeline changed" event carrying the delta would be
-  even better.
+* **A bulk timeline accessor in the Fusion API (needs Autodesk).** `Timeline`
+  exposes only `.count` and `.item(index)`, and each `.item()` call costs
+  ~6 ms regardless of index (measured live, 2026-07-15) — ~6 s to read a
+  ~1450-object timeline. A single call returning the whole timeline as an
+  array — a `Timeline.asArray()` / `allItems`, like many other Fusion
+  collections already provide — would turn that into one round-trip and would
+  eliminate the remaining full-walk cases below. *If you work on the Fusion
+  API team: please add this.* A "timeline changed" event carrying the delta
+  would be even better.
 
 * **Incremental refresh (shipped in v0.7.10).** The timeline wrappers held
   from the previous refresh survive Fusion's recompute and act as live views —
