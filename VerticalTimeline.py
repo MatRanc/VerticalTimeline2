@@ -193,6 +193,51 @@ def invalidate(send=True, clear=False):
     else:
         palette.sendInfoToHTML('setTimeline', json.dumps(data))
 
+def marker_fastpath_command(target_node):
+    '''Post-roll palette update without the O(N) rebuild (PERFORMANCE.md Tier 1
+    #2). A roll leaves the feature set unchanged — only which rows are rolled
+    back — and rollTo(False) parks the marker right after the target, so the
+    rolled-back set is exactly the leaves after the target in display order.
+    That is computed from the cached tree with zero Fusion API calls; the JS
+    toggles row classes in place. A group header counts as rolled back when all
+    of its leaves are. Returns None (caller falls back to a full invalidate)
+    when the target cannot be located in the cache.
+
+    Ceiling: any side effect of the recompute (a re-included feature turning
+    errored, say) is not reflected until the next full refresh.'''
+    if timeline_cache_tree is None or target_node is None:
+        return None
+    # Rolling onto a group parks the marker after its last feature.
+    target = target_node
+    while target.children:
+        target = target.children[-1]
+    if target.obj is None:
+        return None
+
+    rolled = []
+    seen_target = [False]
+    def walk(node):
+        # Returns True when every leaf under node is rolled back.
+        all_rolled = bool(node.children)
+        for child in node.children:
+            if child.children:
+                child_rolled = walk(child)
+                if child_rolled:
+                    rolled.append(child.id)
+                all_rolled = all_rolled and child_rolled
+            else:
+                if seen_target[0]:
+                    rolled.append(child.id)
+                else:
+                    all_rolled = False
+                if child is target:
+                    seen_target[0] = True
+        return all_rolled
+    walk(timeline_cache_tree)
+    if not seen_target[0]:
+        return None
+    return {'action': 'setMarker', 'data': {'rolled': rolled}}
+
 def report_message(text):
     '''Report a non-fatal message to the user without a blocking message box.
 
@@ -231,10 +276,32 @@ def get_features(timeline):
         (node.timeline_index, node.id)
         for node in timeline_cache_map.values() if node.timeline_index >= 0)
 
-    component_parent_map = get_component_parent_map()
+    component_parent_map = get_cached_component_parent_map(timeline)
     design = app.activeProduct
 
     return get_features_from_node(timeline_cache_tree, component_parent_map, design)
+
+# Component parent map cached across refreshes (PERFORMANCE.md Tier 2 #3): the
+# map walk is O(occurrences) API calls, but component structure changes far
+# less often than the timeline refreshes. Keyed on (document, timeline.count),
+# so any add/delete (and a document switch) rebuilds it.
+# ponytail: renaming or reparenting a component changes neither key, so the
+# parent bars can show stale ancestry until the next add/delete; key on a
+# rename/move signal if users notice.
+_parent_map_cache = None
+_parent_map_cache_key = None
+
+def get_cached_component_parent_map(timeline):
+    global _parent_map_cache, _parent_map_cache_key
+    try:
+        doc_name = app.activeDocument.name
+    except Exception:
+        doc_name = ''
+    key = (doc_name, timeline.count)
+    if _parent_map_cache is None or key != _parent_map_cache_key:
+        _parent_map_cache = get_component_parent_map()
+        _parent_map_cache_key = key
+    return _parent_map_cache
 
 def get_features_from_node(timeline_tree_node, component_parent_map, design):
     features = []
@@ -900,8 +967,13 @@ def palette_incoming_from_html_handler(args):
             # instead of redirecting the roll to the whole group (which made the
             # marker only ever sit before/after the group).
             obj.parentGroup.isCollapsed = False
-        html_commands.append(obj.rollTo(False))
-        html_commands.append(invalidate(send=False))
+        rolled_ok = obj.rollTo(False)
+        html_commands.append(rolled_ok)
+        # A successful roll takes the in-place fast path (see
+        # marker_fastpath_command); anything unexpected falls back to the full
+        # rebuild, which is the correctness backstop.
+        fastpath = marker_fastpath_command(node) if rolled_ok else None
+        html_commands.append(fastpath or invalidate(send=False))
     elif action == 'toggleVisibility':
         # Show/Hide, mirroring the entity's browser-tree visibility toggle.
         # Different entity types expose it differently (isLightBulbOn for

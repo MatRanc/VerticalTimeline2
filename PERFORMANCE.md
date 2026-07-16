@@ -16,6 +16,9 @@ calls `schedule_refresh()` (a 100 ms trailing debounce that marshals back to the
 main thread via a custom event) instead of `invalidate()` directly, so a burst
 of commands collapses into one refresh.
 
+Also shipped (unreleased): **#2 (roll fast-path)**, **#3 (parent-map cache)**
+and **#4 (event delegation)** — see the ✅ notes inline below.
+
 ## Considered and rejected: rewrite in C++
 
 Fusion add-ins can be written in C++, but that won't speed this one up. Every slow
@@ -40,17 +43,22 @@ non-completed terminations. `invalidate()`:
 2. `get_features_from_node` (`VerticalTimeline.py:383`) still reads each
    feature's entity and rebuilds the full feature payload every refresh
    (structure + state together), so add/remove and a simple roll cost the same.
-3. `get_component_parent_map` (`VerticalTimeline.py:560`) walks **all**
-   occurrences every refresh, even though component structure rarely changes.
+3. ~~`get_component_parent_map` walks **all** occurrences every refresh~~ —
+   now cached across refreshes (#3 below).
 4. The palette JS then does `timeline.innerHTML = ''` and `appendItems`
    (`palette.html`) rebuilds every row from scratch and attaches ~7 event
    listeners per row, every refresh.
 
 Rolling the marker and suppressing/unsuppressing leave the feature *list*
 unchanged yet still trigger the full O(N) recompute + full DOM teardown (both
-call `invalidate()`) — this is what Tier 1 #1/#2 target. Renaming already
-updates the row in place, and GUI/palette selection uses the O(1) highlight
-path shipped in v0.5.0; neither does a full rebuild.
+call `invalidate()`) — this is what Tier 1 #1/#2 target. (#2 is now shipped for
+palette-initiated rolls; suppress and native-timeline rolls still full-rebuild.
+Suppress was deliberately left on the full-rebuild path: suppressing a feature
+can change downstream features' health state and an occurrence's parent path,
+so an in-place toggle would show stale rows — it needs the #1 state-only
+re-read, not a pure client-side toggle.) Renaming already updates the row in
+place, and GUI/palette selection uses the O(1) highlight path shipped in
+v0.5.0; neither does a full rebuild.
 
 ## Tier 1 — biggest wins
 
@@ -66,30 +74,47 @@ path shipped in v0.5.0; neither does a full rebuild.
    `get_features_from_node` / `invalidate`
    (`VerticalTimeline.py:307,372,383`).
 
-2. **Don't full-rebuild on marker-only (roll) changes.** Rolling the marker
-   (right-click → roll) leaves the feature list identical; only which rows are
-   "rolled back" changes. When `timeline.count` is unchanged but `markerPosition`
-   changed, send a lightweight message (new marker / set of rolled-back ids) and
-   have the JS toggle the `suppressed` / `first-rolled-back` classes in place
-   instead of `innerHTML=''` + full rebuild. Files: `invalidate`,
-   `command_terminated_handler`, `rollToFeature` handler; `palette.html`
-   `handle()` (add a `setMarker` action).
+2. **Don't full-rebuild on marker-only (roll) changes.** ✅ Shipped for
+   palette-initiated rolls (context menu + marker-bar drag): the `rollToFeature`
+   handler computes the rolled-back id set from the cached tree — zero Fusion
+   API calls, since `rollTo(False)` parks the marker right after the target —
+   and returns a `setMarker` command; `applyMarker()` in `palette.html` toggles
+   the `suppressed` / `first-rolled-back` classes and `data-rolled-back` attrs
+   in place. Any doubt (target not in cache, roll failed) falls back to the
+   full rebuild. Not covered: rolls made on Fusion's *native* timeline still
+   arrive as `commandTerminated` and full-rebuild — detecting "marker-only"
+   there means solving the same structural-ambiguity problem as #1. Also any
+   recompute side effect (a re-included feature turning errored) shows on the
+   next full refresh, not instantly. Files: `marker_fastpath_command` /
+   `rollToFeature` handler (`VerticalTimeline.py`); `applyMarker`
+   (`palette.html`).
+   **Observed result (2026-07-15, large design):** helps, but rolls are still
+   not instant. The palette rebuild is skipped on this path, so the remaining
+   latency is elsewhere — the two candidates are (a) Fusion's own recompute
+   when the marker moves (kernel work, not fixable from the add-in) and
+   (b) a `commandTerminated` fired by the roll itself, which would run the
+   debounced *full* refresh ~100 ms later anyway. Flip `TRACE_COMMANDS = True`
+   and roll once to tell them apart: if a command id shows up in
+   `~/vt_cmd_trace.log`, adding a targeted skip for palette-initiated rolls
+   recovers the rest; if the log stays empty, the wait is Fusion's recompute
+   and this item is as fast as it can get.
 
 ## Tier 2 — server-side, low risk
 
-3. **Cache `get_component_parent_map()` across refreshes.** Recompute only when
-   the structure likely changed (e.g. when `timeline.count` changes), instead of
-   walking all occurrences every refresh. Secondary: weigh staleness vs. cost.
-   File: `VerticalTimeline.py:560`.
+3. **Cache `get_component_parent_map()` across refreshes.** ✅ Shipped.
+   `get_cached_component_parent_map()` keys the map on
+   `(document name, timeline.count)`, so adds/deletes and document switches
+   rebuild it and plain state refreshes reuse it. Accepted staleness: renaming
+   or reparenting a component changes neither key, so parent bars can show
+   stale ancestry until the next add/delete; key on a rename/move signal if
+   users notice. File: `VerticalTimeline.py` (`get_cached_component_parent_map`).
 
 ## Tier 3 — palette rendering
 
-4. **Event delegation.** Attach `click` / `dblclick` / `contextmenu` once on the
-   `#timeline` container and dispatch via `e.target.closest('.feature')`, instead
-   of re-attaching those three to every row on every rebuild. (That removes 3 of
-   the ~7 listeners a row gets; the 4 name-field listeners are a separate
-   concern.) These handlers already use `closest` / target tests, so this is a
-   natural refactor. File: `palette.html` `appendItems`.
+4. **Event delegation.** ✅ Shipped. `click` / `dblclick` / `contextmenu` are
+   attached once on the `#timeline` container; the handlers already resolved
+   the row via `e.target.closest('.feature')`. The 4 name-field listeners stay
+   per-row (focus/blur don't bubble). File: `palette.html`.
 
 5. **In-place updates instead of full teardown** for state-only refreshes (ties
    to #1/#2): toggle classes and set names on existing rows; keep full rebuild
@@ -102,8 +127,10 @@ path shipped in v0.5.0; neither does a full rebuild.
 
 ## Recommended order
 
-#3 (safe, immediate) → #1, #2, #5 (structure/state + incremental render, the
-largest win) → #4, #6.
+#3 ✅ → #2 ✅ (palette-initiated rolls) → #4 ✅, #6 ✅. Remaining: #1 + #5
+(structure/state split + in-place render for everything else — the full
+incremental refresh), still shelved on the collapsed-group ambiguity described
+in README's wishlist.
 
 ## How to verify the work when it's done
 

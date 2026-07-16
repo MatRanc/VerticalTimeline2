@@ -387,6 +387,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                         else restoringScroll = false;
                     })();
                     break;
+                case 'setMarker':
+                    applyMarker(new Set(data['rolled']));
+                    break;
                 case 'showMessage':
                     showStatus(data['message']);
                     break;
@@ -440,10 +443,6 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             if (feature.health) {
                 listItem.classList.add('health-' + feature.health);
             }
-
-            listItem.addEventListener('click', onFeatureClick);
-            listItem.addEventListener('dblclick', onFeatureDoubleClick);
-            listItem.addEventListener('contextmenu', onFeatureContextMenu);
 
             if (feature['edit-name']) {
                 listItem.setAttribute('data-edit-name', feature['edit-name']);
@@ -697,14 +696,15 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             return true;
         }
 
+        // Delegated from #timeline, so first check a row was actually hit;
+        // empty palette space keeps its default behavior.
+        let item = e.target.closest('.feature');
+        if (!item) {
+            return;
+        }
         // Show our own menu instead of acting immediately. preventDefault() must
         // run synchronously so the browser's native menu never appears.
         e.preventDefault();
-
-        let item = e.target.closest('.feature');
-        if (!item) {
-            return false;
-        }
         // Right-clicking a row outside the current multi-selection reduces the
         // selection to just that row (matching the native timeline behavior).
         let id = parseInt(item.getAttribute('data-id'));
@@ -967,6 +967,31 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         }
     }
 
+    // In-place update after a roll: the add-in sends just the rolled-back row
+    // ids (setMarker) instead of the whole timeline, so a roll skips the full
+    // rebuild (PERFORMANCE.md Tier 1 #2). Mirrors appendItems' class rules:
+    // 'suppressed' when suppressed or rolled back, 'first-rolled-back' on the
+    // first rolled-back row of each list.
+    function applyMarker(rolledIds) {
+        for (let list of document.querySelectorAll('#timeline ul')) {
+            let first = true;
+            for (let row of list.children) {
+                if (!row.classList.contains('feature')) continue;
+                let rolled = rolledIds.has(parseInt(row.getAttribute('data-id')));
+                if (rolled) {
+                    row.setAttribute('data-rolled-back', '1');
+                } else {
+                    row.removeAttribute('data-rolled-back');
+                }
+                row.classList.toggle('suppressed',
+                    rolled || row.getAttribute('data-suppressed') === '1');
+                row.classList.toggle('first-rolled-back', rolled && first);
+                if (rolled) first = false;
+            }
+        }
+        positionMarkerHandle();
+    }
+
     // Reflect the feature(s) selected in Fusion's GUI as the row selection.
     function highlightFeatures(ids) {
         selectedIds = new Set((ids || []).map(Number));
@@ -1092,6 +1117,17 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         console.log("HTML ready");
         send('ready');
     }
+
+    // Row click/dblclick/contextmenu are delegated from the #timeline container
+    // (the handlers already resolve the row via e.target.closest('.feature')),
+    // so a rebuild doesn't re-attach three listeners per row (PERFORMANCE.md
+    // Tier 3 #4). The name-field listeners stay per-row: focus/blur don't bubble.
+    (function() {
+        let timelineEl = document.getElementById('timeline');
+        timelineEl.addEventListener('click', onFeatureClick);
+        timelineEl.addEventListener('dblclick', onFeatureDoubleClick);
+        timelineEl.addEventListener('contextmenu', onFeatureContextMenu);
+    })();
 
     // Dismiss the context menu on any interaction outside it.
     document.addEventListener('click', hideContextMenu);

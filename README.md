@@ -80,13 +80,20 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   type" (`'Feature'`) from "a real type is missing an icon mapping".
 
 * **Large designs (roughly 1000+ timeline nodes) are slow to edit**
-  ([#10](https://github.com/MatRanc/VerticalTimeline2/issues/10)). Every real
-  edit rebuilds the palette, which reads the whole timeline out of Fusion one
+  ([#10](https://github.com/MatRanc/VerticalTimeline2/issues/10)). Most real
+  edits rebuild the palette, which reads the whole timeline out of Fusion one
   object at a time (`Timeline.item(i)` — there is no bulk accessor). On a
   ~1450-node design that is ~6 s per edit, and Fusion is frozen while it runs
   because the API must be called on the main thread. Adds (extrude, fillet, …)
-  pay it in full, since a new feature genuinely changes the timeline. See the
-  wishlist below.
+  pay it in full, since a new feature genuinely changes the timeline. Rolling
+  the marker *from the palette* (context menu or marker-bar drag) no longer
+  pays the palette rebuild: the rolled-back rows are computed from the cached
+  timeline and updated in place. In practice that makes rolls on a large
+  design noticeably faster but still not instant — the remaining wait is
+  outside the palette (Fusion's own recompute when the marker moves, and any
+  follow-up refresh a Fusion-fired command triggers). Rolls made on Fusion's
+  own timeline, and suppress/edit operations, still trigger the full rebuild.
+  See the wishlist below.
 
 * **Deleting a group whose contents feed later features fails from the add-in.**
   When a group's features have downstream dependents, Fusion refuses the delete
@@ -118,18 +125,24 @@ two ways to attack it:
   team: please add this.* A "timeline changed" event carrying the delta would be
   even better.
 
-* **Incremental refresh (doable in the add-in, deliberately not shipped yet).**
+* **Incremental refresh (doable in the add-in, partially shipped).**
   After an edit we still hold every timeline wrapper from the previous refresh,
   and they survive Fusion's recompute (verified). For a state-only edit
   (suppress / roll / rename) the set and order are unchanged, so the ~6 s
   re-materialization can be skipped entirely — reuse the held wrappers and
   re-read only the changed state (measured ~6 s → ~0.7 s). Even an add creates
   just one new object, so in principle the ~1450 survivors could be reused and
-  only the new one materialized (~0.9 s). What blocks shipping it is doing this
-  *safely on grouped timelines*: Fusion returns `index == -1` for anything inside
-  a collapsed group, so there is no cheap, reliable way to tell an in-group
-  add/reorder from a no-op — guess wrong and the palette shows a stale or
-  incorrect timeline. The fragility, not the feasibility, is why it is shelved.
+  only the new one materialized (~0.9 s). The *safe subset* is shipped: for
+  palette-initiated rolls the add-in knows exactly what changed (only the
+  marker), so it computes the rolled-back rows from the held wrappers with no
+  API reads at all and updates the rows in place. (Testing on a large design:
+  this helps, but rolls are still not instant — the palette rebuild is gone
+  from that path, so the rest of the wait is Fusion-side.) What blocks the general
+  version is doing this *safely on grouped timelines for external edits*:
+  Fusion returns `index == -1` for anything inside a collapsed group, so there
+  is no cheap, reliable way to tell an in-group add/reorder from a no-op —
+  guess wrong and the palette shows a stale or incorrect timeline. The
+  fragility, not the feasibility, is why the rest is shelved.
 
 ## Changelog
 
