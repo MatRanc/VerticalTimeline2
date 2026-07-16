@@ -279,9 +279,83 @@ timeline_cache_entity_index = {}
 # different strings on different reads), so the token index can miss; the
 # timeline position cannot drift within one cache generation.
 timeline_cache_position_index = {}
+# Cache of the last flattened timeline: (TimelineObject, native_index) pairs.
+# The flatten walk is THE refresh cost - Timeline.item(i) is ~6 ms per node
+# regardless of index (measured 2026-07-15 on a 1054-node design: 6.1 s of the
+# 6.4 s refresh), while property reads on already-held wrappers are
+# microseconds. Held wrappers are live views (external suppress/roll/rename/
+# health changes are visible through them; verified) and deleted objects flip
+# isValid, so the previous refresh's list can be reused whenever a cheap
+# validation passes; every doubtful case falls back to the full walk.
+_flat_cache = None
+_flat_cache_count = -1      # timeline.count when the cache was built
+_flat_cache_timeline = None # the Timeline the cache belongs to (identity key)
+_flat_cache_force = False   # set on commands that can reorder without count change
+
+# Commands that can change timeline ORDER while keeping timeline.count and
+# every wrapper valid - only the command id reveals them. Undo/redo can replay
+# anything, including a reorder. (Ids verified against ui.commandDefinitions,
+# 2026-07-15.)
+# ponytail: a native-timeline move that keeps count unchanged and fires none
+# of these ids would show stale row order until the next structural refresh;
+# extend the set from a TRACE_COMMANDS capture if that ever shows up.
+FORCE_FULL_REFRESH_COMMAND_IDS = {
+    'UndoCommand', 'RedoCommand', 'FusionReorderCommand'}
+
+def get_flat_timeline(timeline):
+    '''flatten_timeline with wrapper reuse: returns the cached pairs when a
+    cheap validation proves the structure is unchanged (or grew only at a
+    marker-at-end tail - the plain extrude case), else does the full walk.'''
+    global _flat_cache, _flat_cache_count, _flat_cache_timeline, _flat_cache_force
+    count = timeline.count
+    if not _flat_cache_force and _flat_cache is not None:
+        try:
+            same_timeline = (timeline == _flat_cache_timeline)
+            flat = _try_reuse_flat(timeline, count) if same_timeline else None
+        except Exception:
+            flat = None
+        if flat is not None:
+            _flat_cache = flat
+            _flat_cache_count = count
+            return flat
+    _flat_cache = thomasa88lib.timeline.flatten_timeline(timeline)
+    _flat_cache_count = count
+    _flat_cache_timeline = timeline
+    _flat_cache_force = False
+    return _flat_cache
+
+def _try_reuse_flat(timeline, count):
+    '''The cached pairs if they still describe the timeline, else None.
+
+    Same count + every held wrapper valid -> unchanged set and order (deletes
+    invalidate a wrapper; adds/collapses/expands change the count; reorders are
+    caught by FORCE_FULL_REFRESH_COMMAND_IDS before we get here). A count that
+    only grew, with the marker at the very end and the pre-add tail wrapper
+    unchanged, is an append (extrude & co) -> materialize just the new tail
+    objects. Anything else -> None (full walk).'''
+    if count < _flat_cache_count:
+        return None
+    if any(not obj.isValid for obj, _ in _flat_cache):  # ~3 ms for ~1450
+        return None
+    if count == _flat_cache_count:
+        return _flat_cache
+    # Timeline grew. New features insert at the marker, so only the
+    # marker-at-end append is recognizably safe. A middle insert leaves the
+    # marker below count; a tail slot that was a collapsed group fails the
+    # tail-identity check (item() returns the group, the cache holds a leaf).
+    if timeline.markerPosition != count:
+        return None
+    new_objs = [timeline.item(i) for i in range(_flat_cache_count, count)]
+    if any(obj.isGroup for obj in new_objs):
+        return None
+    if _flat_cache_count > 0:
+        if not _flat_cache or timeline.item(_flat_cache_count - 1) != _flat_cache[-1][0]:
+            return None
+    return _flat_cache + list(zip(new_objs, range(_flat_cache_count, count)))
+
 def get_features(timeline):
     global timeline_cache_tree, timeline_cache_map
-    flat_timeline = thomasa88lib.timeline.flatten_timeline(timeline)
+    flat_timeline = get_flat_timeline(timeline)
     timeline_cache_tree, timeline_cache_map = build_timeline_tree(flat_timeline)
     timeline_cache_entity_index.clear()
     timeline_cache_position_index.clear()
@@ -1244,6 +1318,13 @@ def command_terminated_handler(args):
         except Exception:
             pass
 
+    # Order-changing commands invalidate the flat-timeline cache: they keep
+    # timeline.count and every wrapper valid, so the reuse guards in
+    # get_flat_timeline cannot see them - only the command id can.
+    if eventArgs.commandId in FORCE_FULL_REFRESH_COMMAND_IDS:
+        global _flat_cache_force
+        _flat_cache_force = True
+
     # Commands that never change the timeline. Camera navigation MUST be skipped
     # here: on macOS/Windows it fires commandTerminated on every orbit/pan release
     # (it fires nothing on some builds — why the freeze only hit certain machines,
@@ -1383,10 +1464,12 @@ def active_selection_changed_handler(args):
                 pass
             if node_id is None:
                 # Timeline entities (features, sketches, planes, occurrences)
-                # expose their TimelineObject; its index is an O(1) key into the
-                # position map at any design size. BRep geometry has no
-                # timelineObject and skips through. index is -1 inside a
-                # collapsed group — never in the map, so it misses cleanly.
+                # expose their TimelineObject; its index keys the position map
+                # at any design size (~3 ms per read — an internal position
+                # lookup, not a cheap property; fine for one selection). BRep
+                # geometry has no timelineObject and skips through. Inside a
+                # collapsed group .index RAISES (InternalValidationError, not
+                # -1 — verified 2026-07-15), landing in the except: a clean miss.
                 try:
                     node_id = timeline_cache_position_index.get(
                         native.timelineObject.index)

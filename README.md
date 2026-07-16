@@ -79,29 +79,22 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   (`no icon resolved for feature type '…'`), which tells apart "Fusion hid the
   type" (`'Feature'`) from "a real type is missing an icon mapping".
 
-* **Large designs (roughly 1000+ timeline nodes) are slow to edit**
-  ([#10](https://github.com/MatRanc/VerticalTimeline2/issues/10)). Most real
-  edits rebuild the palette, which reads the whole timeline out of Fusion one
-  object at a time (`Timeline.item(i)` — there is no bulk accessor). On a
-  ~1450-node design that is ~6 s per edit, and Fusion is frozen while it runs
-  because the API must be called on the main thread. Adds (extrude, fillet, …)
-  pay it in full, since a new feature genuinely changes the timeline. Rolling
-  the marker *from the palette* (context menu or marker-bar drag) no longer
-  pays the palette rebuild: the rolled-back rows are computed from the cached
-  timeline and updated in place, and the roll's own `FusionRollCommand` no
-  longer triggers a follow-up full rebuild. Any wait left on a palette roll is
-  Fusion's own recompute when the marker moves, which no add-in can skip.
-  Rolls made on Fusion's own timeline, and suppress/edit operations, still
-  trigger the full rebuild. Confirmed on a large design (2026-07-15): rolling
-  the *native* timeline is therefore noticeably slower than rolling from the
-  palette — it pays Fusion's recompute *plus* the full palette rebuild — so on
-  big designs prefer the palette's own marker. Likewise a new feature
-  (extrude, fillet, …) always pays the full rebuild: the timeline genuinely
-  changed, and without a bulk read API the add-in can only re-read it item by
-  item. Neither can be properly fixed from the add-in today; the *Remaining
-  slow paths* section of [PERFORMANCE.md](PERFORMANCE.md) records the partial
-  (and riskier) options that were considered and deferred. See also the
-  wishlist below.
+* **Some edits on large designs (roughly 1000+ timeline nodes) are still slow**
+  ([#10](https://github.com/MatRanc/VerticalTimeline2/issues/10)). Reading the
+  timeline out of Fusion costs ~6 ms per item (`Timeline.item(i)` — there is
+  no bulk accessor), so a full re-read of a ~1450-feature design takes ~6 s
+  with Fusion frozen (API calls run on the main thread). Since v0.7.10 the
+  palette reuses the previous refresh's timeline wrappers whenever a cheap
+  validation proves the feature set is unchanged (or only grew at the end), so
+  the common operations — rolling the marker from either timeline,
+  suppress/unsuppress, rename, sketch edits, and adds at the end like extrude —
+  refresh in ~0.25 s (measured on a live 1054-slot design). The full ~6 s
+  re-read still runs when the structure changed in a way the add-in cannot
+  cheaply trust: deletes, inserts in the middle of the history, reorders,
+  undo/redo, and the first refresh after switching documents. Fusion's own
+  recompute when the marker moves or a feature lands is separate kernel work
+  that no add-in can skip. Details and remaining options:
+  [PERFORMANCE.md](PERFORMANCE.md).
 
 * **Deleting a group whose contents feed later features fails from the add-in.**
   When a group's features have downstream dependents, Fusion refuses the delete
@@ -133,28 +126,34 @@ two ways to attack it:
   team: please add this.* A "timeline changed" event carrying the delta would be
   even better.
 
-* **Incremental refresh (doable in the add-in, partially shipped).**
-  After an edit we still hold every timeline wrapper from the previous refresh,
-  and they survive Fusion's recompute (verified). For a state-only edit
-  (suppress / roll / rename) the set and order are unchanged, so the ~6 s
-  re-materialization can be skipped entirely — reuse the held wrappers and
-  re-read only the changed state (measured ~6 s → ~0.7 s). Even an add creates
-  just one new object, so in principle the ~1450 survivors could be reused and
-  only the new one materialized (~0.9 s). The *safe subset* is shipped: for
-  palette-initiated rolls the add-in knows exactly what changed (only the
-  marker), so it computes the rolled-back rows from the held wrappers with no
-  API reads at all and updates the rows in place (and eats the one
-  `FusionRollCommand` the roll itself fires, which used to redo the full
-  rebuild ~100 ms later — see PERFORMANCE.md #2). What blocks the general
-  version is doing this *safely on grouped timelines for external edits*:
-  Fusion returns `index == -1` for anything inside a collapsed group, so there
-  is no cheap, reliable way to tell an in-group add/reorder from a no-op —
-  guess wrong and the palette shows a stale or incorrect timeline. The
-  fragility, not the feasibility, is why the rest is shelved.
+* **Incremental refresh (shipped in v0.7.10).** The timeline wrappers held
+  from the previous refresh survive Fusion's recompute and act as live views —
+  external suppress/roll/rename/health changes read back correctly through
+  them, deleted objects flip `isValid`, and property reads on held wrappers
+  cost microseconds versus ~6 ms per `Timeline.item(i)` re-materialization
+  (all verified against a running Fusion, 2026-07-15). The palette therefore
+  reuses the held wrapper list whenever `timeline.count` is unchanged and
+  every wrapper is still valid (with order-changing commands — undo/redo/
+  reorder — forcing a full re-read by command id), and recognizes the
+  marker-at-end append so an extrude materializes only the new object.
+  Measured on a live 1054-slot design: 6.36 s → 0.25 s per refresh. The old
+  collapsed-group fear turned out to be moot — the reuse path never needs
+  `TimelineObject.index` at all. A bulk accessor from Autodesk would still
+  remove the remaining full-walk cases (deletes, middle inserts, reorders,
+  cold cache after a document switch).
 
 ## Changelog
 
 * v 0.7.10
+  * Large-design refreshes are ~25× faster for the common operations. The
+    palette now reuses the timeline wrappers from the previous refresh
+    whenever a cheap validation shows the feature set is unchanged (or only
+    grew at the end), instead of re-reading the whole timeline object by
+    object. Rolling the marker (from either timeline), suppress/unsuppress,
+    rename, sketch edits, and adds at the end (extrude etc.) refresh in
+    ~0.25 s instead of ~6.4 s on a 1054-slot design (measured live). Deletes,
+    middle-of-history inserts, reorders, undo/redo, and document switches
+    still do the full re-read (#10).
   * Rolling the history marker from the palette (right-click → *Roll Timeline
     Marker Here*, or dragging the marker bar) no longer rebuilds the whole
     palette. The rolled-back rows are computed from the cached timeline and

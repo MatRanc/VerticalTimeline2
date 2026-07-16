@@ -16,8 +16,11 @@ calls `schedule_refresh()` (a 100 ms trailing debounce that marshals back to the
 main thread via a custom event) instead of `invalidate()` directly, so a burst
 of commands collapses into one refresh.
 
-Also shipped (unreleased): **#2 (roll fast-path)**, **#3 (parent-map cache)**
-and **#4 (event delegation)** — see the ✅ notes inline below.
+Also shipped (unreleased): **#1 (wrapper-reuse flat cache — the big one:
+6.36 s → 0.25 s measured)**, **#2 (roll fast-path)**, **#3 (parent-map
+cache)** and **#4 (event delegation)** — see the ✅ notes inline below. The
+2026-07-15 items were profiled and verified live in a running Fusion via MCP
+script execution.
 
 ## Considered and rejected: rewrite in C++
 
@@ -30,49 +33,60 @@ full ~1600-line rewrite, drop `thomasa88lib` (Python-only), per-platform compile
 (Windows + mac), and loss of Shift+S hot reload / `editEnabled` iteration. The real
 lever is the Tier 1–3 items below.
 
-## Where the time goes
+## Where the time goes — MEASURED (2026-07-15, live 1054-slot / 1437-leaf design)
 
-Most command completions trigger `invalidate()` (`VerticalTimeline.py:307`) via
-`command_terminated_handler`, which skips `SelectCommand`/`CommitCommand` and
-non-completed terminations. `invalidate()`:
+Profiled in the running Fusion via MCP script execution. The old assumptions
+in this file were wrong; the measured breakdown of the ~6.4 s refresh:
 
-1. Re-reads the whole timeline and rebuilds the tree (`get_features` →
-   `flatten_timeline` → `build_timeline_tree` → `get_component_parent_map` →
-   `get_features_from_node`) — O(N) every refresh, even when the feature *list*
-   is unchanged.
-2. `get_features_from_node` (`VerticalTimeline.py:383`) still reads each
-   feature's entity and rebuilds the full feature payload every refresh
-   (structure + state together), so add/remove and a simple roll cost the same.
-3. ~~`get_component_parent_map` walks **all** occurrences every refresh~~ —
-   now cached across refreshes (#3 below).
-4. The palette JS then does `timeline.innerHTML = ''` and `appendItems`
-   (`palette.html`) rebuilds every row from scratch and attaches ~7 event
-   listeners per row, every refresh.
+| phase | time |
+|---|---|
+| `flatten_timeline` — the `Timeline.item(i)` walk | **6.10 s (95%)** |
+| `get_features_from_node` — entity reads, icons, parent paths | 0.29 s |
+| `get_component_parent_map` (264 components) | 0.018 s |
+| `build_timeline_tree` | 0.009 s |
+| state re-read (name/isSuppressed/isRolledBack/health ×1404 held wrappers) | 0.019 s |
 
-Rolling the marker and suppressing/unsuppressing leave the feature *list*
-unchanged yet still trigger the full O(N) recompute + full DOM teardown (both
-call `invalidate()`) — this is what Tier 1 #1/#2 target. (#2 is now shipped for
-palette-initiated rolls; suppress and native-timeline rolls still full-rebuild.
-Suppress was deliberately left on the full-rebuild path: suppressing a feature
-can change downstream features' health state and an occurrence's parent path,
-so an in-place toggle would show stale rows — it needs the #1 state-only
-re-read, not a pure client-side toggle.) Renaming already updates the row in
-place, and GUI/palette selection uses the O(1) highlight path shipped in
-v0.5.0; neither does a full rebuild.
+Key API facts (all measured live):
+- `Timeline.item(i)` costs ~6 ms **flat, regardless of index** — materializing
+  a wrapper is what's expensive, so the walk is O(N)×6 ms.
+- Property reads on **already-held** wrappers are *microseconds*, and held
+  wrappers are **live views**: external suppress/roll/rename/health changes
+  read back correctly through them (verified both directions).
+- A deleted object's held wrapper flips `isValid` (a full-cache sweep is
+  ~3 ms); other wrappers are unaffected.
+- `TimelineObject.index` is NOT cheap (~3 ms — internal position lookup) and
+  RAISES (`InternalValidationError`) for members of collapsed groups rather
+  than returning -1.
+- Wrapper equality (`==`) is native-object identity, ~0.014 ms.
+
+So the entire game is: **never re-run the `item(i)` walk unless the structure
+actually changed**. Everything downstream is already fast.
+
+With the #1 wrapper-reuse cache shipped, any refresh that keeps the feature
+set intact — suppress/unsuppress, renames, rolls from either timeline, sketch
+edits, health changes — reuses the held wrappers and costs ~0.25 s instead of
+~6.4 s; the state is re-read through the wrappers so nothing goes stale
+(suppress-changed downstream health and occurrence parent paths included,
+since the payload pass re-reads those every refresh anyway).
 
 ## Tier 1 — biggest wins
 
-1. **Skip per-feature work that didn't change (structure vs. state).** Split the
-   payload into *structure* (feature list, type, image, parent-components —
-   changes only on add/remove/reorder) and *state* (name, `isSuppressed`,
-   `isRolledBack`, marker position — changes often). Caveat: an occurrence's
-   `parent-components` collapses to `[]` while it is rolled back/suppressed
-   (`get_feature_parent_path`), so it's not purely structural. Cache structure
-   keyed by a stable id and only recompute it when the timeline count/order
-   changes.
-   Re-read only the volatile state on a normal refresh. Files: `get_features` /
-   `get_features_from_node` / `invalidate`
-   (`VerticalTimeline.py:307,372,383`).
+1. **Skip per-feature work that didn't change (structure vs. state).**
+   ✅ Shipped, in a simpler form than sketched here: the measured numbers show
+   the per-feature payload rebuild is cheap (0.29 s) and only the `item(i)`
+   walk is expensive, so instead of splitting the payload, `get_flat_timeline`
+   caches the **flattened wrapper list** across refreshes and reuses it when a
+   cheap validation passes: same `timeline.count` + every held wrapper
+   `isValid` (~10 ms total) + no order-changing command seen
+   (`FORCE_FULL_REFRESH_COMMAND_IDS`: undo/redo/reorder). A count that grew
+   with the marker at the end and an unchanged tail wrapper is treated as an
+   append (the plain extrude) — only the new tail objects are materialized.
+   Anything doubtful falls back to the full walk. Measured on the live
+   1054-slot design: refresh 6.36 s → **0.25 s**; the append path adds ~1 ms.
+   Verified end-to-end: suppress / native roll / append reflect correct state
+   through the reuse path, deletes fall back, and the reused cache is
+   object-identical to a fresh walk. Files: `get_flat_timeline` /
+   `_try_reuse_flat` (`VerticalTimeline.py`), mirror test `test_flat_cache.py`.
 
 2. **Don't full-rebuild on marker-only (roll) changes.** ✅ Shipped for
    palette-initiated rolls (context menu + marker-bar drag): the `rollToFeature`
@@ -125,46 +139,39 @@ v0.5.0; neither does a full rebuild.
    `threading.Timer` in `schedule_refresh()` collapses bursts; the timer fires a
    custom event so `invalidate()` runs back on the main thread.
 
-## Remaining slow paths (confirmed 2026-07-15, large design)
+## Remaining slow paths (updated after the 2026-07-15 MCP-verified work)
 
-User testing after the v0.7.10 work confirmed two paths that still freeze for
-seconds on large designs. Documented here because neither has a clean fix from
-the add-in today — this is the honest state of things, not an oversight.
+The two big complaints from earlier that day — native-timeline rolls and adds
+at the end — were **fixed the same evening** by the wrapper-reuse cache (#1
+above), once live profiling showed the real cost model. Native rolls needed no
+marker-slot math at all: the count is unchanged, so the reuse path simply
+re-reads `isRolledBack` through the held wrappers (microseconds each). What
+still runs the full ~6 s `item(i)` walk:
 
-- **Rolling the marker on Fusion's *native* timeline** still runs the full
-  rebuild, so it feels slower than rolling from the palette (it pays Fusion's
-  recompute *plus* the ~6 s rebuild). Half-fixable in principle:
-  `FusionRollCommand` identifies the change as marker-only, so the handler
-  could read just `markerPosition` and `count` (2 API calls), verify the count
-  matches the cache, and reuse the palette-roll fast path. Two things make it
-  fragile: mapping a top-level `markerPosition` onto the cached flattened tree
-  when collapsed groups are present (members report `index == -1`, and
-  adjacent collapsed groups are indistinguishable from leaf indices alone —
-  the slot layout has to be reconstructed from the cached tree), and a native
-  roll into a collapsed group auto-expands it, changing the slot layout inside
-  the same command (the count guard would catch that case and fall back to the
-  full rebuild). Doable, but it is the same class of fragility that shelved
-  the general incremental refresh — deferred until the shipped wins prove
-  stable. Workaround: roll from the palette.
+- **Deletes** — a held wrapper goes invalid, so the cache correctly refuses to
+  reuse itself. A repair pass is possible (drop the invalid wrappers when the
+  count delta matches and fix up the stored indices) but deletes recompute the
+  model anyway and are rarer than rolls/adds; add it if users notice.
+- **Middle inserts** (rolling back and extruding mid-history) — the append
+  heuristic requires the marker at the end; a middle insert is detectable but
+  placing the new object into the flattened order safely needs more than a
+  tail check. Fallback is always correct, just slow.
+- **Reorders, undo, redo** (`FORCE_FULL_REFRESH_COMMAND_IDS`) — these can
+  change order while keeping every wrapper valid and the count unchanged, so
+  only the command id reveals them; they force the full walk by design.
+- **First refresh after a document switch** — cold cache, inherent.
+- **Fusion's own recompute** when the marker moves or a feature lands — kernel
+  work, invisible to and unfixable by any add-in.
 
-- **Adding a feature (extrude, fillet, …), suppressing, or editing** always
-  pays the full rebuild. For adds this is inherent today: the feature set
-  genuinely changed, and the API only exposes `Timeline.item(i)`, so the
-  add-in must re-read the timeline item by item. The honest fixes are
-  Autodesk's bulk accessor (see the README wishlist — out of our hands) or the
-  shelved reuse-survivors incremental materialization (#1/#5 above, estimated
-  ~6 s → ~0.9 s for an add, with the collapsed-group ambiguity that keeps it
-  shelved). Suppress additionally changes downstream health states and
-  occurrence parent paths, so it needs the #1 state-only re-read rather than a
-  client-side toggle.
+The bulk accessor ask to Autodesk (README wishlist) still stands: it would
+remove the cold-cache walk too.
 
 ## Recommended order
 
-#3 ✅ → #2 ✅ (palette-initiated rolls) → #4 ✅, #6 ✅. Remaining: #1 + #5
-(structure/state split + in-place render for everything else — the full
-incremental refresh), still shelved on the collapsed-group ambiguity described
-in README's wishlist. The *Remaining slow paths* section above maps those open
-items to the two slow interactions users actually feel (native rolls, adds).
+#1 ✅, #2 ✅, #3 ✅, #4 ✅, #6 ✅. Remaining, in value order: a delete-repair
+pass for the flat cache, a middle-insert repair, and #5 (in-place DOM updates —
+the payload side is now fast, so this is purely about skipping the JS
+teardown). See *Remaining slow paths* above.
 
 ## How to verify the work when it's done
 
