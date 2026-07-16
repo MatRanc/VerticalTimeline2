@@ -92,7 +92,16 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   longer triggers a follow-up full rebuild. Any wait left on a palette roll is
   Fusion's own recompute when the marker moves, which no add-in can skip.
   Rolls made on Fusion's own timeline, and suppress/edit operations, still
-  trigger the full rebuild. See the wishlist below.
+  trigger the full rebuild. Confirmed on a large design (2026-07-15): rolling
+  the *native* timeline is therefore noticeably slower than rolling from the
+  palette — it pays Fusion's recompute *plus* the full palette rebuild — so on
+  big designs prefer the palette's own marker. Likewise a new feature
+  (extrude, fillet, …) always pays the full rebuild: the timeline genuinely
+  changed, and without a bulk read API the add-in can only re-read it item by
+  item. Neither can be properly fixed from the add-in today; the *Remaining
+  slow paths* section of [PERFORMANCE.md](PERFORMANCE.md) records the partial
+  (and riskier) options that were considered and deferred. See also the
+  wishlist below.
 
 * **Deleting a group whose contents feed later features fails from the add-in.**
   When a group's features have downstream dependents, Fusion refuses the delete

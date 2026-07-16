@@ -125,12 +125,46 @@ v0.5.0; neither does a full rebuild.
    `threading.Timer` in `schedule_refresh()` collapses bursts; the timer fires a
    custom event so `invalidate()` runs back on the main thread.
 
+## Remaining slow paths (confirmed 2026-07-15, large design)
+
+User testing after the v0.7.10 work confirmed two paths that still freeze for
+seconds on large designs. Documented here because neither has a clean fix from
+the add-in today — this is the honest state of things, not an oversight.
+
+- **Rolling the marker on Fusion's *native* timeline** still runs the full
+  rebuild, so it feels slower than rolling from the palette (it pays Fusion's
+  recompute *plus* the ~6 s rebuild). Half-fixable in principle:
+  `FusionRollCommand` identifies the change as marker-only, so the handler
+  could read just `markerPosition` and `count` (2 API calls), verify the count
+  matches the cache, and reuse the palette-roll fast path. Two things make it
+  fragile: mapping a top-level `markerPosition` onto the cached flattened tree
+  when collapsed groups are present (members report `index == -1`, and
+  adjacent collapsed groups are indistinguishable from leaf indices alone —
+  the slot layout has to be reconstructed from the cached tree), and a native
+  roll into a collapsed group auto-expands it, changing the slot layout inside
+  the same command (the count guard would catch that case and fall back to the
+  full rebuild). Doable, but it is the same class of fragility that shelved
+  the general incremental refresh — deferred until the shipped wins prove
+  stable. Workaround: roll from the palette.
+
+- **Adding a feature (extrude, fillet, …), suppressing, or editing** always
+  pays the full rebuild. For adds this is inherent today: the feature set
+  genuinely changed, and the API only exposes `Timeline.item(i)`, so the
+  add-in must re-read the timeline item by item. The honest fixes are
+  Autodesk's bulk accessor (see the README wishlist — out of our hands) or the
+  shelved reuse-survivors incremental materialization (#1/#5 above, estimated
+  ~6 s → ~0.9 s for an add, with the collapsed-group ambiguity that keeps it
+  shelved). Suppress additionally changes downstream health states and
+  occurrence parent paths, so it needs the #1 state-only re-read rather than a
+  client-side toggle.
+
 ## Recommended order
 
 #3 ✅ → #2 ✅ (palette-initiated rolls) → #4 ✅, #6 ✅. Remaining: #1 + #5
 (structure/state split + in-place render for everything else — the full
 incremental refresh), still shelved on the collapsed-group ambiguity described
-in README's wishlist.
+in README's wishlist. The *Remaining slow paths* section above maps those open
+items to the two slow interactions users actually feel (native rolls, adds).
 
 ## How to verify the work when it's done
 
