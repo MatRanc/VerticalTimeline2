@@ -60,9 +60,11 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 * **Clicking geometry in the viewport does not highlight the creating
   feature's row** ([#14](https://github.com/MatRanc/VerticalTimeline2/issues/14)).
   A viewport click selects a `BRepFace`/`BRepEdge`, and the Fusion API has no
-  link from a face back to the feature that created it. Scanning every
-  feature's face list instead would take seconds per click (API calls are
-  ~10 ms each), i.e. the issue-#9 freeze again. Selecting the feature itself —
+  link from a face back to the feature that created it (`BRepFace` exposes
+  geometry, body, edges, tokens — nothing pointing at a feature; re-verified
+  against the 2026 API reference). Scanning every feature's face list instead
+  would take seconds per click (collection accesses cost ~6 ms each,
+  measured), i.e. the issue-#9 freeze again. Selecting the feature itself —
   a native-timeline row, or a sketch/plane/component in the browser — does
   highlight the row.
 
