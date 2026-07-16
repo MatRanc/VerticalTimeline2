@@ -294,13 +294,17 @@ _flat_cache_force = False   # set on commands that can reorder without count cha
 
 # Commands that can change timeline ORDER while keeping timeline.count and
 # every wrapper valid - only the command id reveals them. Undo/redo can replay
-# anything, including a reorder. (Ids verified against ui.commandDefinitions,
-# 2026-07-15.)
+# anything, including a reorder; the dropdown/launcher variants are included
+# so no undo entry point slips past. (All ids verified to exist against
+# ui.commandDefinitions, 2026-07-15.) Note this only guards ORDER: row state
+# (name/suppressed/rolled/health) is re-read through the live wrappers every
+# refresh and cannot go stale regardless of command id.
 # ponytail: a native-timeline move that keeps count unchanged and fires none
 # of these ids would show stale row order until the next structural refresh;
 # extend the set from a TRACE_COMMANDS capture if that ever shows up.
 FORCE_FULL_REFRESH_COMMAND_IDS = {
-    'UndoCommand', 'RedoCommand', 'FusionReorderCommand'}
+    'UndoCommand', 'RedoCommand', 'UndoDropDown', 'RedoDropDown',
+    'LaunchUndoCmdDef', 'LaunchRedoCmdDef', 'FusionReorderCommand'}
 
 def get_flat_timeline(timeline):
     '''flatten_timeline with wrapper reuse: returns the cached pairs when a

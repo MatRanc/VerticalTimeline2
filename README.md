@@ -138,9 +138,15 @@ two ways to attack it:
   marker-at-end append so an extrude materializes only the new object.
   Measured on a live 1054-slot design: 6.36 s → 0.25 s per refresh. The old
   collapsed-group fear turned out to be moot — the reuse path never needs
-  `TimelineObject.index` at all. A bulk accessor from Autodesk would still
-  remove the remaining full-walk cases (deletes, middle inserts, reorders,
-  cold cache after a document switch).
+  `TimelineObject.index` at all. Staleness: the cache holds object
+  *references*, not copied values — every refresh re-reads all row state
+  through the live wrappers — so rows can never show outdated names,
+  suppression, or health; the only theoretical gap is row *order* after an
+  order-changing command outside the known undo/redo/reorder id list, which
+  self-heals at the next structural change (full analysis: *Can the cache show
+  an outdated timeline?* in [PERFORMANCE.md](PERFORMANCE.md)). A bulk accessor
+  from Autodesk would still remove the remaining full-walk cases (deletes,
+  middle inserts, reorders, cold cache after a document switch).
 
 ## Changelog
 
@@ -151,9 +157,10 @@ two ways to attack it:
     grew at the end), instead of re-reading the whole timeline object by
     object. Rolling the marker (from either timeline), suppress/unsuppress,
     rename, sketch edits, and adds at the end (extrude etc.) refresh in
-    ~0.25 s instead of ~6.4 s on a 1054-slot design (measured live). Deletes,
-    middle-of-history inserts, reorders, undo/redo, and document switches
-    still do the full re-read (#10).
+    ~0.25 s instead of ~6.4 s on a 1054-slot design (measured live). The cache
+    holds live object references and all row state is re-read each refresh, so
+    reused rows never show outdated data. Deletes, middle-of-history inserts,
+    reorders, undo/redo, and document switches still do the full re-read (#10).
   * Rolling the history marker from the palette (right-click → *Roll Timeline
     Marker Here*, or dragging the marker bar) no longer rebuilds the whole
     palette. The rolled-back rows are computed from the cached timeline and

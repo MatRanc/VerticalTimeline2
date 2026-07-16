@@ -62,6 +62,42 @@ Key API facts (all measured live):
 So the entire game is: **never re-run the `item(i)` walk unless the structure
 actually changed**. Everything downstream is already fast.
 
+## Can the cache show an outdated timeline?
+
+Row **state can never go stale**: the cache stores object *references*, not
+copied values. Every refresh re-reads name / `isSuppressed` / `isRolledBack` /
+health / entity / icons / parent paths through the held wrappers, and those
+are live views into Fusion (verified both directions). Rename something,
+suppress it, roll past it — the next refresh shows it correctly whether or not
+the cache was reused.
+
+What the cache pins is the **set and order** of rows. Each way those can
+change, and its guard:
+
+| change | guard |
+|---|---|
+| add (anywhere) | `timeline.count` grew → append path or full walk |
+| delete (incl. inside a collapsed group, where count doesn't change) | `isValid` sweep over every held wrapper |
+| group collapse/expand, group create/delete | count changes (collapsed groups occupy one slot); expanded groups don't affect the flat list, and the tree/grouping is rebuilt from live `parentGroup` reads every refresh |
+| reorder, undo, redo | `FORCE_FULL_REFRESH_COMMAND_IDS` (all undo/redo entry points + `FusionReorderCommand`) force the full walk |
+| document switch / reopen | cache is keyed on the Timeline object's identity |
+| anything that throws during validation | falls back to the full walk |
+
+Residual gaps, both self-healing at the next add/delete/undo/switch:
+
+1. **An order-changing command outside the force list** (an exotic reorder
+   path we haven't observed) would show rows in a stale *order* — never with
+   stale state — until the next structural refresh. If that ever shows up,
+   capture the id with `TRACE_COMMANDS` and extend the set.
+2. **Collapsing/expanding a single-member group** keeps the count unchanged.
+   The visible palette stays correct (the leaf set and order are identical);
+   only the cached selection-highlight *index* for that row goes stale, which
+   can affect the highlight fallback, nothing else.
+
+The middle-insert case is excluded by construction: new features always land
+at the marker, so an insert that isn't at the very end leaves
+`markerPosition < count` and the append path refuses it (full walk).
+
 With the #1 wrapper-reuse cache shipped, any refresh that keeps the feature
 set intact — suppress/unsuppress, renames, rolls from either timeline, sketch
 edits, health changes — reuses the held wrappers and costs ~0.25 s instead of
