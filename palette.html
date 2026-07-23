@@ -177,6 +177,26 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             #timeline {
                 position: relative;
             }
+            #toolbar {
+                padding: 3px 5px;
+                border-bottom: 1px solid var(--group-border);
+            }
+            #collapse-all-btn, #expand-all-btn {
+                font-size: 11px;
+                font-family: inherit;
+                color: var(--fg);
+                background-color: var(--bg);
+                border: 1px solid var(--group-border);
+                border-radius: 3px;
+                padding: 2px 6px;
+                cursor: pointer;
+            }
+            #expand-all-btn {
+                margin-left: 4px;
+            }
+            #collapse-all-btn:hover, #expand-all-btn:hover {
+                background-color: var(--hover-bg);
+            }
             .marker-handle {
                 position: absolute;
                 left: 0;
@@ -286,6 +306,10 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 <div id="message">
                     Loading...
                 </div>
+                <div id="toolbar">
+                    <button id="collapse-all-btn" title="Collapse all groups">Collapse All</button>
+                    <button id="expand-all-btn" title="Expand all groups">Expand All</button>
+                </div>
                 <div id="timeline">
                     
                 </div>
@@ -309,6 +333,15 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     }
 
     var collapsedGroups = new Set();
+
+    // Reuses each group's own toggle click handler (updates collapsedGroups +
+    // the collapsed classes together) rather than duplicating that logic here.
+    document.getElementById('collapse-all-btn').addEventListener('click', () => {
+        document.querySelectorAll('#timeline .group-toggle:not(.collapsed)').forEach(t => t.click());
+    });
+    document.getElementById('expand-all-btn').addEventListener('click', () => {
+        document.querySelectorAll('#timeline .group-toggle.collapsed').forEach(t => t.click());
+    });
 
     // Icon file paths for the right-click menu, supplied by the add-in.
     var menuIcons = {};
