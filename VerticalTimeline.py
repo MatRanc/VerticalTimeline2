@@ -1017,7 +1017,7 @@ def palette_incoming_from_html_handler(args):
                             f'Editing {thomasa88lib.utils.short_class(entity)} inside a '
                             'component is not supported.'))
                         ret = False
-                    elif command_id:
+                    elif command_id and ui.commandDefinitions.itemById(command_id):
                         ui.commandDefinitions.itemById(command_id).execute()
                     else:
                         html_commands.append(report_message(

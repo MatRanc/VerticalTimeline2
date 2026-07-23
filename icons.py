@@ -58,14 +58,19 @@ OCCURRENCE_RESOURCE_MAP = {
 }
 
 PLANE_RESOURCE_MAP = {
-    'ConstructionPlaneOffsetDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_offset', 'FusionDcEditWorkPlaneByPlaneOffsetCommand'),
-    'ConstructionPlaneAtAngleDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_angle', 'FusionDcEditWorkPlaneByLineAndAngleCommand'),
-    'ConstructionPlaneTangentDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_tangent', 'FusionDcEditWorkPlaneTangentToCylinderCommand'),
-    'ConstructionPlaneMidplaneDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_midplane', 'FusionDcEditWorkPlaneFromTwoPlanesCommand'),
-    'ConstructionPlaneTwoEdgesDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_two_axis', 'FusionDcEditWorkPlaneFromTwoLinesCommand'),
-    'ConstructionPlaneThreePointsDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_three_points', 'FusionDcEditWorkPlaneFromThreePointsCommand'),
-    'ConstructionPlaneTangentAtPointDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_point_face', 'FusionDcEditWorkPlaneTangentToFaceAtPointCommand'),
-    'ConstructionPlaneDistanceOnPathDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_onpath', 'FusionDcEditWorkPlaneAlongPathCommand'),
+    # Edit command ids verified against a live Fusion session's
+    # ui.commandDefinitions (#15) - the previous ids were guessed and didn't
+    # exist, so itemById() returned None and crashed on .execute(). Tangent and
+    # TangentAtPoint share one command: Fusion merged those two creation flows
+    # into a single "Tangent Plane" dialog.
+    'ConstructionPlaneOffsetDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_offset', 'FusionDcEditConstructionPlaneByPlaneOffsetCommand'),
+    'ConstructionPlaneAtAngleDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_angle', 'FusionDcEditConstructionPlaneAtAngleCommand'),
+    'ConstructionPlaneTangentDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_tangent', 'FusionDcEditConstructionTangentPlaneCommand'),
+    'ConstructionPlaneMidplaneDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_midplane', 'FusionDcEditConstructionMidPlaneCommand'),
+    'ConstructionPlaneTwoEdgesDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_two_axis', 'FusionDcEditConstructionPlaneFromTwoEdgesCommand'),
+    'ConstructionPlaneThreePointsDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_three_points', 'FusionDcEditConstructionPlaneFromThreePointsCommand'),
+    'ConstructionPlaneTangentAtPointDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_point_face', 'FusionDcEditConstructionTangentPlaneCommand'),
+    'ConstructionPlaneDistanceOnPathDefinition': ('Fusion/UI/FusionUI/Resources/construction/plane_onpath', 'FusionDcEditConstructionPlaneAlongPathCommand'),
 }
 
 # Generic construction-plane glyph used when we can't tell which kind of plane it
@@ -79,6 +84,43 @@ def get_plane_res(i):
     except Exception:
         match = None
     return match or PLANE_FALLBACK_RES
+
+# Same per-definition pattern as PLANE_RESOURCE_MAP, ids verified live (#8-family
+# follow-up). NormalToFaceAtPoint and PerpendicularAtPoint share one edit command:
+# Fusion merged those two creation flows into a single "Perpendicular to Face" dialog.
+AXIS_RESOURCE_MAP = {
+    'ConstructionAxisCircularFaceDefinition': ('Fusion/UI/FusionUI/Resources/construction/axis_line', 'FusionDcEditConstructionAxisThroughCylinderCommand'),
+    'ConstructionAxisEdgeDefinition': ('Fusion/UI/FusionUI/Resources/construction/axis_line', 'FusionDcEditConstructionAxisThroughEdgeCommand'),
+    'ConstructionAxisNormalToFaceAtPointDefinition': ('Fusion/UI/FusionUI/Resources/construction/axis_line', 'FusionDcEditConstructionAxisNormalToFaceCommand'),
+    'ConstructionAxisPerpendicularAtPointDefinition': ('Fusion/UI/FusionUI/Resources/construction/axis_line', 'FusionDcEditConstructionAxisNormalToFaceCommand'),
+    'ConstructionAxisTwoPlaneDefinition': ('Fusion/UI/FusionUI/Resources/construction/axis_line', 'FusionDcEditConstructionAxisFromTwoPlanesCommand'),
+    'ConstructionAxisTwoPointDefinition': ('Fusion/UI/FusionUI/Resources/construction/axis_line', 'FusionDcEditConstructionAxisThroughTwoPointsCommand'),
+    # ConstructionAxisByLineDefinition (non-parametric direct-edit axes) has no
+    # dedicated edit command, so it's intentionally absent - falls to the fallback below.
+}
+AXIS_FALLBACK_RES = ('Fusion/UI/FusionUI/Resources/construction/axis_line', '')
+def get_axis_res(i):
+    try:
+        match = AXIS_RESOURCE_MAP.get(utils.short_class(i.entity.definition))
+    except Exception:
+        match = None
+    return match or AXIS_FALLBACK_RES
+
+POINT_RESOURCE_MAP = {
+    'ConstructionPointCenterDefinition': ('Fusion/UI/FusionUI/Resources/construction/point_center', 'FusionDcEditConstructionPointFromCircleOrSphereCommand'),
+    'ConstructionPointDistanceOnPathDefinition': ('Fusion/UI/FusionUI/Resources/construction/point_center', 'FusionDcEditConstructionPointAlongPathCommand'),
+    'ConstructionPointEdgePlaneDefinition': ('Fusion/UI/FusionUI/Resources/construction/point_center', 'FusionDcEditConstructionPointAtEdgeAndPlaneCommand'),
+    'ConstructionPointPointDefinition': ('Fusion/UI/FusionUI/Resources/construction/point_center', 'FusionDcEditConstructionPointFromPointCommand'),
+    'ConstructionPointThreePlanesDefinition': ('Fusion/UI/FusionUI/Resources/construction/point_center', 'FusionDcEditConstructionPointFromThreePlanesCommand'),
+    'ConstructionPointTwoEdgesDefinition': ('Fusion/UI/FusionUI/Resources/construction/point_center', 'FusionDcEditConstructionPointThroughTwoEdgesCommand'),
+}
+POINT_FALLBACK_RES = ('Fusion/UI/FusionUI/Resources/construction/point_center', '')
+def get_point_res(i):
+    try:
+        match = POINT_RESOURCE_MAP.get(utils.short_class(i.entity.definition))
+    except Exception:
+        match = None
+    return match or POINT_FALLBACK_RES
 
 # Mesh-editing icons live in the ParaMesh library — a sibling of the Fusion
 # tree, like Neutron, with the same macOS/Windows path split (docs/ICONS.md).
@@ -188,16 +230,20 @@ FEATURE_RESOURCE_MAP = {
     'CopyPasteBody': ('Fusion/UI/FusionUI/Resources/Assembly/CopyPasteBodies', ''),
 
     # More features that surface in the timeline but weren't mapped, so they
-    # showed the finishX placeholder. Icons verified on disk; icon only, no edit
-    # wiring yet. # ponytail: icon only, no edit wiring yet.
-    'EmbossFeature': ('Fusion/UI/FusionUI/Resources/Modeling/Emboss', ''),
-    'RuleFilletFeature': ('Fusion/UI/FusionUI/Resources/solid/rulefillet', ''),  # distinct from FilletFeature
-    'DeleteFaceFeature': ('Fusion/UI/FusionUI/Resources/Modeling/DeleteFaces', ''),  # solid delete-face, vs SurfaceDeleteFaceFeature
-    'DeriveFeature': ('Fusion/UI/FusionUI/Resources/Derive/CloneWM', ''),  # insert-derive (see comment block below)
-    # Construction axis/point: one representative glyph (like the plane fallback).
-    # A per-definition map + edit ids (cf. PLANE_RESOURCE_MAP) is the upgrade path.
-    'ConstructionAxis': ('Fusion/UI/FusionUI/Resources/construction/axis_line', ''),
-    'ConstructionPoint': ('Fusion/UI/FusionUI/Resources/construction/point_center', ''),
+    # showed the finishX placeholder. Icons verified on disk; edit command ids
+    # verified live against a running Fusion session's ui.commandDefinitions.
+    'EmbossFeature': ('Fusion/UI/FusionUI/Resources/Modeling/Emboss', 'FusionDcEmbossEditCmd'),
+    # RuleFilletFeature: distinct from FilletFeature ('FusionDcFilletEditCommand',
+    # tooltip-confirmed) and sheet-metal fillet ('FusionSheetMetalFilletEditCommand',
+    # tooltip-confirmed). This is the one remaining "Edit Feature"-labeled fillet
+    # command with no tooltip authored - best match by elimination, not tooltip-verified.
+    'RuleFilletFeature': ('Fusion/UI/FusionUI/Resources/solid/rulefillet', 'FusionDcFilletFeatureEditCommand'),
+    'DeleteFaceFeature': ('Fusion/UI/FusionUI/Resources/Modeling/DeleteFaces', 'FusionDcDeleteFaceEditCommand'),  # solid delete-face, vs SurfaceDeleteFaceFeature
+    'DeriveFeature': ('Fusion/UI/FusionUI/Resources/Derive/CloneWM', 'EditDeriveCommand'),  # insert-derive (see comment block below)
+    # Construction axis/point: per-definition map + edit ids, same pattern as
+    # PLANE_RESOURCE_MAP above.
+    'ConstructionAxis': get_axis_res,
+    'ConstructionPoint': get_point_res,
 
     # Bug: https://forums.autodesk.com/t5/fusion-360-api-and-scripts/api-bug-cannot-access-entity-of-quot-move-quot-feature/m-p/9651921
     # '2 : InternalValidationError : res': 'Fusion/UI/FusionSheetMetalUI/Resources/Flange',
