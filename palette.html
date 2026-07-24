@@ -535,6 +535,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     listItem.classList.toggle('collapsed', collapse);
                     groupToggle.classList.toggle('collapsed', collapse);
                     groupList.classList.toggle('collapsed', collapse);
+                    // Collapsing/expanding shifts every row below it, so the
+                    // marker's cached pixel position goes stale.
+                    positionMarkerHandle();
                 });
                 if (collapsedGroups.has(feature.name)) {
                     listItem.classList.add('collapsed');
@@ -1038,6 +1041,18 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     var draggingMarker = false;
     var markerStartY = 0;
 
+    // A row hidden inside a collapsed group has offsetTop/offsetHeight stuck at
+    // 0 (display:none breaks offsetParent), which is what sent the marker to
+    // y=0 whenever the rollback point fell inside a collapsed group. Walk up to
+    // the collapsed group's header instead, which is the closest visible stand-in.
+    function visibleRepresentative(row) {
+        let collapsedAncestor;
+        while ((collapsedAncestor = row.closest('.feature-group.collapsed'))) {
+            row = collapsedAncestor.previousElementSibling;
+        }
+        return row;
+    }
+
     function positionMarkerHandle() {
         let timeline = document.getElementById('timeline');
         if (!markerHandle) {
@@ -1059,8 +1074,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         // The marker sits above the first rolled-back row, or below the last row
         // when nothing is rolled back.
         let firstRolled = timeline.querySelector('.feature[data-rolled-back="1"]');
-        let y = firstRolled ? firstRolled.offsetTop
-                            : rows[rows.length - 1].offsetTop + rows[rows.length - 1].offsetHeight;
+        let target = visibleRepresentative(firstRolled || rows[rows.length - 1]);
+        let y = firstRolled ? target.offsetTop
+                            : target.offsetTop + target.offsetHeight;
         markerHandle.style.top = y + 'px';
         markerHandle.style.display = 'block';
     }
