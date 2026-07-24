@@ -96,7 +96,7 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   undo/redo, and the first refresh after switching documents. Fusion's own
   recompute when the marker moves or a feature lands is separate kernel work
   that no add-in can skip. Details and remaining options:
-  [PERFORMANCE.md](PERFORMANCE.md).
+  [PERFORMANCE.md](docs/PERFORMANCE.md).
 
 * **In theory, an unrecognized reorder could show rows in a stale order.**
   The fast-refresh cache above only skips the full re-read when it can prove
@@ -126,7 +126,7 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
 
 ## Performance and wishlist
 
-Ongoing backlog: [PERFORMANCE.md](PERFORMANCE.md). The big refresh cost above
+Ongoing backlog: [PERFORMANCE.md](docs/PERFORMANCE.md). The big refresh cost above
 comes down to one thing — reading the timeline object-by-object. Of the two
 ways to attack it, the second is now shipped; the first needs Autodesk:
 
@@ -158,7 +158,7 @@ ways to attack it, the second is now shipped; the first needs Autodesk:
   suppression, or health; the only theoretical gap is row *order* after an
   order-changing command outside the known undo/redo/reorder id list, which
   self-heals at the next structural change (full analysis: *Can the cache show
-  an outdated timeline?* in [PERFORMANCE.md](PERFORMANCE.md)). A bulk accessor
+  an outdated timeline?* in [PERFORMANCE.md](docs/PERFORMANCE.md)). A bulk accessor
   from Autodesk would still remove the remaining full-walk cases (deletes,
   middle inserts, reorders, cold cache after a document switch).
 
