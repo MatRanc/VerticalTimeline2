@@ -165,6 +165,23 @@ ways to attack it, the second is now shipped; the first needs Autodesk:
 ## Changelog
 
 * v 0.7.10
+  * Fixed the history-marker bar going stale (not moving) when a group was
+    collapsed or expanded, including via the new *Collapse All*/*Expand All*
+    buttons; it also no longer snaps to the top of the palette when the
+    rollback point is inside a collapsed group.
+  * New *Collapse All* / *Expand All* buttons above the timeline collapse or
+    expand every group in one click (#21).
+  * Fixed several timeline items that couldn't be edited, or crashed, because
+    their edit-command id was wrong or missing: construction planes (all 8
+    ids were guessed and didn't exist, so editing one crashed with
+    `AttributeError`, #15) and Emboss (had no edit command, so editing it
+    silently did nothing, #16). Rule Fillet, solid Delete Face, Derive, and
+    Construction Axis/Point - previously icon-only - are now editable too.
+    All ids are now verified against a running Fusion session instead of
+    guessed.
+  * Hardened the undo/redo full-refresh guard to also cover the Undo/Redo
+    dropdown menu items, not just the plain undo/redo commands, so a reorder
+    undone that way can't slip through with a stale row order.
   * Large-design refreshes are ~25× faster for the common operations. The
     palette now reuses the timeline wrappers from the previous refresh
     whenever a cheap validation shows the feature set is unchanged (or only
