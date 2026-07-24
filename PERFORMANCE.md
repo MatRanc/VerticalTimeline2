@@ -85,14 +85,25 @@ change, and its guard:
 
 Residual gaps, both self-healing at the next add/delete/undo/switch:
 
-1. **An order-changing command outside the force list** (an exotic reorder
-   path we haven't observed) would show rows in a stale *order* — never with
-   stale state — until the next structural refresh. If that ever shows up,
-   capture the id with `TRACE_COMMANDS` and extend the set.
-2. **Collapsing/expanding a single-member group** keeps the count unchanged.
-   The visible palette stays correct (the leaf set and order are identical);
-   only the cached selection-highlight *index* for that row goes stale, which
-   can affect the highlight fallback, nothing else.
+1. **An order-changing command outside the force list.** The main path
+   (dragging a feature in the native timeline, `FusionReorderCommand`) is
+   verified against a real drag with `TRACE_COMMANDS` (2026-07-24): it fires
+   with `terminationReason=Completed` and is correctly force-invalidated.
+   What's left is genuinely unknown-unknowns territory - some *other*,
+   undiscovered command that also reorders the timeline while keeping count
+   unchanged and every wrapper valid, that isn't on the list. If one exists,
+   it would show rows in a stale *order* — never stale *state*, never
+   missing/extra rows — until the next structural refresh (any add, delete,
+   undo, or doc switch, which happen constantly in normal use). If it ever
+   shows up, capture the id with `TRACE_COMMANDS` and extend the set.
+2. **Collapsing/expanding a single-member group** - turns out this can't
+   actually happen in current Fusion (verified 2026-07-24, live): creating a
+   group with fewer than 2 members is rejected by the API
+   (`timelineGroups.add()` raises "At least 2 features needed for a group"),
+   and shrinking an existing group down to 1 member auto-dissolves it back to
+   a plain ungrouped row (confirmed via `parentGroup` flipping to `None`). So
+   this gap is unreachable, not just self-healing - re-verify if a future
+   Fusion version changes either behavior.
 
 The middle-insert case is excluded by construction: new features always land
 at the marker, so an insert that isn't at the very end leaves

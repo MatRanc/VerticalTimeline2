@@ -98,6 +98,17 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   that no add-in can skip. Details and remaining options:
   [PERFORMANCE.md](PERFORMANCE.md).
 
+* **In theory, an unrecognized reorder could show rows in a stale order.**
+  The fast-refresh cache above only skips the full re-read when it can prove
+  nothing changed; every known way to reorder the timeline (dragging a
+  feature, undo/redo) is covered and verified against a real drag. There's no
+  known way to trigger the gap - it would require some other, undiscovered
+  command that reorders features without going through any of the covered
+  paths - and even then the effect is narrow (stale row *order* only, never
+  wrong or missing rows, self-corrects on the next add/delete/undo). See
+  PERFORMANCE.md's "Can the cache show an outdated timeline?" for the full
+  analysis.
+
 * **Deleting a group whose contents feed later features fails from the add-in.**
   When a group's features have downstream dependents, Fusion refuses the delete
   through the API: `TimelineGroup.deleteMe(true)` silently does nothing and

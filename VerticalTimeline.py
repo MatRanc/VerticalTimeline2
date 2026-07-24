@@ -301,7 +301,10 @@ _flat_cache_force = False   # set on commands that can reorder without count cha
 # refresh and cannot go stale regardless of command id.
 # ponytail: a native-timeline move that keeps count unchanged and fires none
 # of these ids would show stale row order until the next structural refresh;
-# extend the set from a TRACE_COMMANDS capture if that ever shows up.
+# extend the set from a TRACE_COMMANDS capture if that ever shows up. The
+# main path (dragging a feature, FusionReorderCommand) IS verified against a
+# real drag via TRACE_COMMANDS (2026-07-24) - see PERFORMANCE.md "Can the
+# cache show an outdated timeline?" for the full residual-gap writeup.
 FORCE_FULL_REFRESH_COMMAND_IDS = {
     'UndoCommand', 'RedoCommand', 'UndoDropDown', 'RedoDropDown',
     'LaunchUndoCmdDef', 'LaunchRedoCmdDef', 'FusionReorderCommand'}
