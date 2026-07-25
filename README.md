@@ -30,9 +30,8 @@ reloading the add-in). To turn it off for good, disable the add-in in the
 * Right-click an item for a context menu: *Roll Timeline Marker Here*, *Edit*,
   *Rename*, *Suppress*/*Unsuppress*, and *Delete*. For an item past the history
   marker (rolled back), the menu also offers *Delete all features after History
-  Marker*. Right-clicking a sketch adds its native options — *Show/Hide*,
-  *Look At*, *Redefine*/*Select Sketch Plane*, *Configure*, and the *Profile* /
-  *Dimension* / *Projected* / *Construction* display toggles.
+  Marker*. Right-clicking a sketch adds its native options too (*Show/Hide*,
+  *Look At*, *Redefine*, display toggles, etc.).
 * Drag the history-marker bar (the line between the active and rolled-back
   items) onto a row to roll the marker there, SolidWorks-style.
 * *Cmd*/*Ctrl*-click (or *Shift*-click for a range) to select multiple items.
@@ -52,8 +51,6 @@ The palette shows its own context menu rather than Fusion's native timeline
 menu. Some native entries — *Create Selection Set*, *Configure*, *Find in
 Browser*, *Find in Window* — have no add-in API to invoke, so they are not
 included.
-
-The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. Press *Shift+S* in Fusion 360™ and go to the *Add-Ins* tab.
 
 ## Known limitations
 
