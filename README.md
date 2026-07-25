@@ -125,6 +125,24 @@ The add-in can be temporarily disabled using the *Scripts and Add-ins* dialog. P
   add-in, it is N separate operations, so it takes N undo steps rather than one —
   the scripting API has no way to batch them atomically.)
 
+* **Deleting a rolled-back feature whose entity is an `Occurrence`** (e.g.
+  *Create Components from Bodies*, *New Component*) **fails from the add-in**
+  ([#24](https://github.com/MatRanc/VerticalTimeline2/issues/24)). A
+  rolled-back row has no computed entity, so there is nothing valid to hand
+  `ui.activeSelections`/Fusion's *Delete* command — confirmed live that even
+  selecting the raw `TimelineObject` directly is rejected ("invalid argument
+  value"). The one rescue that does work — temporarily moving the timeline
+  marker past the row, deleting, then restoring it — was deliberately not
+  built: on a large design it could jump the model past dozens or hundreds of
+  features the user rolled back on purpose, a disruptive side effect for a
+  rare case. Ordinary (non-`Occurrence`) rolled-back features delete fine.
+  Workaround: delete it from Fusion's own native timeline, whose delete works
+  because it goes through Fusion's internal browser selection, never exposed
+  to the scripting API. Wishlist for Autodesk: let `ui.activeSelections`
+  accept an uncomputed/rolled-back entity (or a `TimelineObject` directly), or
+  expose a delete that operates on the timeline row without requiring a live
+  selection.
+
 ## Performance and wishlist
 
 Ongoing backlog: [PERFORMANCE.md](docs/PERFORMANCE.md). The big refresh cost above
@@ -166,6 +184,13 @@ ways to attack it, the second is now shipped; the first needs Autodesk:
 ## Changelog
 
 * v 0.7.10
+  * Investigated [#24](https://github.com/MatRanc/VerticalTimeline2/issues/24)
+    (deleting a rolled-back feature): the #20 native-delete change above
+    already fixed the crash for the common cases. The remaining gap - a
+    rolled-back `Occurrence` row (e.g. *New Component*) can't be selected for
+    delete via the scripting API at all - is a hard API wall, not a bug; see
+    *Known limitations*. The "Could Not Delete" popup now says so when it
+    applies, instead of a bare "could not delete this."
   * Deleting a feature that later features depend on now hands off to
     Fusion's own *Delete* command instead of calling the API's `deleteMe()`
     directly, so it shows Fusion's own accurate "Permanently delete these

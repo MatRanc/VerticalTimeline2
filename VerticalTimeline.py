@@ -902,7 +902,18 @@ def _delete_timeline_obj(obj):
     occurrence, so its path is unresolvable and deleteMe() raises findObjectPath;
     force a recompute (end unsuppressed) and retry, restoring the original
     suppression state if the delete still fails so a failed attempt does not
-    change the model.'''
+    change the model.
+
+    Issue #24: a ROLLED BACK row hits this same findObjectPath error and is
+    deliberately NOT rescued the way a suppressed row is - suppression-toggling
+    only forces a recompute because suppression is what blocked computation for
+    a suppressed row; for a rolled-back row it's the timeline marker position
+    that blocks computation, so toggling isSuppressed here is a no-op and the
+    retry fails identically (verified live). The only working rescue would be
+    temporarily moving the marker past the row, which was rejected as too
+    disruptive on a large file - the row is deletable from the native timeline
+    instead, so RolledBackFeatureHealthState is intentionally left out of the
+    `broken` tuple below.'''
     try:
         return _delete_entity(obj)
     except RuntimeError:
@@ -1309,11 +1320,31 @@ def palette_incoming_from_html_handler(args):
             # path (FusionDeleteCommand missing, or an unexpected exception
             # from the selection/execute calls) - the common "later features
             # depend on this" case is Fusion's own dialog now (_run_native_delete).
+            #
+            # Issue #24: a rolled-back feature has no computed entity, so there
+            # is nothing valid for _run_native_delete to select - confirmed live
+            # that even the raw TimelineObject is rejected by
+            # ui.activeSelections ("invalid argument value"), so this is a wall
+            # in the public API, not a selection-logic bug. Fusion's native
+            # timeline delete works around it internally (outside the scripting
+            # API). Deliberately not "fixed" by temporarily rolling the marker
+            # forward to compute it: on a large file that can jump the model
+            # past dozens/hundreds of features the user rolled back on purpose -
+            # a surprising, disruptive side effect for a rare case that already
+            # has a working native-timeline path.
+            rolled_back = False
+            try:
+                rolled_back = not obj.isGroup and obj.healthState == \
+                    adsk.fusion.FeatureHealthStates.RolledBackFeatureHealthState
+            except (RuntimeError, AttributeError):
+                pass
+            hint = ('\n\nRolled-back features have nothing computed to select - '
+                     'delete from the native timeline instead.') if rolled_back else ''
             print(f'Vertical Timeline: Could not delete this {type_name}'
                   + (f': {err}' if err else '.'))
             excerpt = err[:300].rstrip() + '…' if len(err) > 300 else err
             ui.messageBox(
-                f'Could not delete this {type_name}.' + (f'\n\n{excerpt}' if excerpt else ''),
+                f'Could not delete this {type_name}.' + (f'\n\n{excerpt}' if excerpt else '') + hint,
                 f'Could Not Delete {type_name}',
                 adsk.core.MessageBoxButtonTypes.OKButtonType,
                 adsk.core.MessageBoxIconTypes.CriticalIconType)
