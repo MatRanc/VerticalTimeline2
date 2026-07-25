@@ -166,6 +166,34 @@ ways to attack it, the second is now shipped; the first needs Autodesk:
 ## Changelog
 
 * v 0.7.10
+  * Deleting a feature that later features depend on now hands off to
+    Fusion's own *Delete* command instead of calling the API's `deleteMe()`
+    directly, so it shows Fusion's own accurate "Permanently delete these
+    features and all features that reference them?" confirmation and performs
+    the correct cascading delete - instead of failing with a raw, misleading
+    error dump, or a custom warning built from an approximation of Fusion's
+    dependency graph that the API can't fully see
+    ([#20](https://github.com/MatRanc/VerticalTimeline2/issues/20)).
+  * Right-clicking a feature in Fusion's own context menu (native Timeline or
+    browser tree) now offers *Find in Vertical Timeline*, which selects and
+    scrolls to that row in the palette
+    ([#23](https://github.com/MatRanc/VerticalTimeline2/issues/23)). Most
+    reliable from the Timeline bar and browser tree; viewport right-clicks
+    only work when the picked entity itself maps to a timeline row (not a
+    bare face/edge, which has no single owning feature).
+  * *Review warning* now opens a panel showing the warning text client-side,
+    instead of trying (and failing) to run a native "Review warning" command
+    that doesn't exist via the API
+    ([#17](https://github.com/MatRanc/VerticalTimeline2/issues/17)). Also
+    cleans up the raw HTML markup and un-separated multi-item text Fusion's
+    warning messages can contain.
+  * Fixed *Manage Lost Projections* showing for any sketch warning, not just
+    an actual lost projection
+    ([#18](https://github.com/MatRanc/VerticalTimeline2/issues/18)). It's now
+    gated on the warning text actually describing a lost projection source,
+    rather than a `SketchEntity.referencedEntity is None` check that turned
+    out unreliable - Fusion substitutes a cached, still-valid reference even
+    when the source is genuinely lost.
   * Fixed the history-marker bar going stale (not moving) when a group was
     collapsed or expanded, including via the new *Collapse All*/*Expand All*
     buttons; it also no longer snaps to the top of the palette when the

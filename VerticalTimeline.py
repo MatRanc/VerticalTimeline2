@@ -259,12 +259,20 @@ def marker_fastpath_command(target_node):
         return None
     return {'action': 'setMarker', 'data': {'rolled': rolled}}
 
+STATUS_MESSAGE_MAX_LEN = 300
+
 def report_message(text):
     '''Report a non-fatal message to the user without a blocking message box.
 
-    The text is logged to the Text Commands console and returned as an HTML
-    command so the palette can show it as a transient, non-intrusive status.'''
+    The text is logged in full to the Text Commands console but truncated for
+    the palette's status line: some Fusion API exceptions (e.g. deleteMe() on
+    a design with unrelated broken features elsewhere) put the *entire*
+    design health report - every lost reference, on every feature - into the
+    exception message, which would otherwise blow up the single-line status
+    area into a multi-KB wall of text.'''
     print(f'Vertical Timeline: {text}')
+    if len(text) > STATUS_MESSAGE_MAX_LEN:
+        text = text[:STATUS_MESSAGE_MAX_LEN].rstrip() + '… (see Text Commands for full detail)'
     return {'action': 'showMessage', 'data': {'message': text}}
 
 class TimelineObjectNode:
@@ -484,6 +492,36 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
                                 icons.set_feature_image(feature, icons.SKETCH_FULLY_CONSTRAINED_RES)
                     except Exception:
                         pass
+                    # Issue #18/#20: originally checked SketchEntity.isLinked /
+                    # .referencedEntity (the only Sketch/Feature/TimelineObject
+                    # signal in the API reference) on the assumption that a
+                    # lost source leaves referencedEntity None. Confirmed live
+                    # against a design with real lost projections that this is
+                    # wrong: Fusion substitutes a cached, still-.isValid
+                    # BRepEdge for the lost source ("Cache is used!" in the
+                    # message text), so neither None-ness nor isValid tells
+                    # linked-but-lost apart from linked-and-fine. The message
+                    # text does: "the project source is lost" is the phrase
+                    # Fusion's errorOrWarningMessage uses for exactly this case
+                    # (verified live against a real lost-projection sketch;
+                    # note this property's text does NOT include the
+                    # PROJECT_SOURCE_LOST-style uppercase token that shows up
+                    # in a deleteMe() failure's exception text - those are two
+                    # different message sources, differently formatted). It's
+                    # already fetched above as health-message. Gated on
+                    # feature.get('health') since it only ever appears when
+                    # the sketch is already unhealthy.
+                    # ponytail: English-only phrase match - errorOrWarningMessage
+                    # is very likely localized (Fusion's UserLanguages enum lists
+                    # 15 languages, and this is user-facing explanatory text, not
+                    # an internal code), so on a non-English Fusion this can
+                    # false-negative (button just doesn't show). No stable,
+                    # language-independent signal exists on this property to
+                    # match against instead. Same English-only scope as the rest
+                    # of this add-in's UI, so not fixing in isolation.
+                    if feature.get('health'):
+                        feature['sk-lost-projections'] = \
+                            'project source is lost' in feature.get('health-message', '').lower()
                     # Current display-toggle states, so the right-click menu can
                     # label each item the way Fusion does ("Hide X" when shown,
                     # "Show X" when hidden).
@@ -949,6 +987,35 @@ def _delete_group_contents(node):
             pass
     return all_ok
 
+def _run_native_delete(entities):
+    '''Hand a delete off to Fusion's own "Delete" command (FusionDeleteCommand)
+    instead of calling deleteMe() ourselves (issue #20). deleteMe() has no way
+    to show the "Permanently delete features" confirmation Fusion needs when a
+    later feature depends on one being deleted - it either silently declines
+    or raises, with the exception text being a dump of the errors the delete
+    WOULD cause (computed as if it already happened, not a description of
+    anything currently broken - confirmed live, 2026-07-24). The native
+    command shows Fusion's own accurate dialog and performs the correct
+    cascading delete itself, which nothing here can approximate as well.
+    entities: native entities to select before running the command.
+    Returns True if the command was launched (Fusion owns confirm/execute/
+    refresh from here), False if there was nothing to hand off to it.'''
+    delete_cmd = ui.commandDefinitions.itemById('FusionDeleteCommand')
+    if not delete_cmd:
+        return False
+    sel = adsk.core.ObjectCollection.create()
+    design = app.activeProduct
+    for entity in entities:
+        try:
+            add_entity_to_collection(sel, entity, design)
+        except Exception:
+            pass
+    if not sel.count:
+        return False
+    ui.activeSelections.all = sel
+    delete_cmd.execute()
+    return True
+
 # Event handler for the palette HTML event.
 def palette_incoming_from_html_handler(args):
     global html_ready
@@ -1229,14 +1296,27 @@ def palette_incoming_from_html_handler(args):
                     deleted = obj.deleteMe(False)
             else:
                 type_name = thomasa88lib.utils.short_class(obj.entity)
-                deleted = _delete_timeline_obj(obj)
+                entity = entity_of(obj)
+                deleted = _run_native_delete([entity] if entity is not None else [])
         except (RuntimeError, AttributeError) as e:
             deleted = False
             err = str(e)
         if not deleted:
-            reason = f': {err}' if err else ' (it may be needed by later features).'
-            html_commands.append(report_message(
-                f'Could not delete this {type_name}{reason}'))
+            # A popup instead of the status-line toast (issue #20): the toast
+            # sits below the timeline list and times out after 5s, so if the
+            # user isn't scrolled to the bottom the delete just silently
+            # reverts with no visible explanation. This is now a rare fallback
+            # path (FusionDeleteCommand missing, or an unexpected exception
+            # from the selection/execute calls) - the common "later features
+            # depend on this" case is Fusion's own dialog now (_run_native_delete).
+            print(f'Vertical Timeline: Could not delete this {type_name}'
+                  + (f': {err}' if err else '.'))
+            excerpt = err[:300].rstrip() + '…' if len(err) > 300 else err
+            ui.messageBox(
+                f'Could not delete this {type_name}.' + (f'\n\n{excerpt}' if excerpt else ''),
+                f'Could Not Delete {type_name}',
+                adsk.core.MessageBoxButtonTypes.OKButtonType,
+                adsk.core.MessageBoxIconTypes.CriticalIconType)
         html_commands.append(invalidate(send=False))
     elif action == 'deleteAllAfterMarker':
         # Mirrors Fusion's native "Delete all features after History Marker"
@@ -1284,33 +1364,41 @@ def palette_incoming_from_html_handler(args):
         html_commands.append(invalidate(send=False))
     elif action == 'deleteFeatures':
         nodes = list(nodes_for(data))
+        groups = [n for n in nodes if n.obj.isGroup]
+        non_group_entities = [e for e in (entity_of(n.obj) for n in nodes if not n.obj.isGroup)
+                               if e is not None]
 
-        # Delete later items first, so deleting one does not invalidate the
-        # timeline positions of the others.
+        # issue #20: hand the non-group items to Fusion's own "Delete" command
+        # as one multi-select operation (see _run_native_delete) instead of
+        # deleting them one at a time via the API.
+        if non_group_entities and not _run_native_delete(non_group_entities):
+            html_commands.append(report_message(
+                "Fusion's Delete command is unavailable; could not delete the "
+                'selected item(s).'))
+
+        # Groups still go through deleteMe() directly - this only deletes the
+        # group shell and expands its contents back into the timeline (no
+        # features are removed), so it doesn't hit the "later features depend
+        # on this" case the way a real feature delete does. Later groups first
+        # so removing one does not shift the timeline index of the others.
         def _node_index(n):
             try:
                 return n.obj.index
             except (RuntimeError, AttributeError):
                 return -1
-        nodes.sort(key=_node_index, reverse=True)
-
-        failures = 0
-        for node in nodes:
-            obj = node.obj
-            deleted = False
+        groups.sort(key=_node_index, reverse=True)
+        failed_names = []
+        for node in groups:
             try:
-                if obj.isGroup:
-                    deleted = obj.deleteMe(False)
-                else:
-                    deleted = _delete_timeline_obj(obj)
+                deleted = node.obj.deleteMe(False)
             except (RuntimeError, AttributeError):
                 deleted = False
             if not deleted:
-                failures += 1
-        if failures:
+                failed_names.append(node.obj.name)
+        if failed_names:
             html_commands.append(report_message(
-                f'Could not delete {failures} of the selected items '
-                '(they may be needed by later features).'))
+                f'Could not delete {len(failed_names)} group(s): '
+                + ', '.join(failed_names)))
         html_commands.append(invalidate(send=False))
 
     if html_commands:

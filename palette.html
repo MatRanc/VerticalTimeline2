@@ -298,6 +298,48 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 margin: 4px 0;
                 background-color: var(--menu-border);
             }
+            .warning-panel {
+                position: fixed;
+                z-index: 1000;
+                min-width: 200px;
+                max-width: 320px;
+                display: flex;
+                flex-direction: column;
+                background-color: var(--menu-bg);
+                color: var(--fg);
+                border: 1px solid var(--menu-border);
+                border-left: 3px solid var(--health-warning);
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+            }
+            .warning-panel.health-error {
+                border-left-color: var(--health-error);
+            }
+            .warning-panel.hidden {
+                display: none;
+            }
+            .warning-panel-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                padding: 6px 8px;
+                border-bottom: 1px solid var(--menu-border);
+                font-weight: bold;
+            }
+            .warning-panel-close {
+                cursor: pointer;
+                padding: 0 4px;
+            }
+            .warning-panel-close:hover {
+                background-color: var(--hover-bg);
+            }
+            .warning-panel-message {
+                padding: 8px;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                overflow-y: auto;
+                max-height: min(320px, 50vh);
+            }
         </style>
     </head>
     <body>
@@ -444,6 +486,23 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         return 'OK';
     }
 
+    // Fusion's Feature.errorOrWarningMessage embeds raw '<b>'/'<br/>' markup
+    // for its own native (HTML-rendering) UI, and concatenates multiple
+    // sub-item failures with no separator at all between them (verified live:
+    // "...Cache is used!Project3Edge 1 missing..." - confirmed a Fusion data
+    // quirk, not a truncation on our end). Since the palette shows this text
+    // via textContent (no HTML injection), turn the markup into line breaks
+    // and split the glued-together "Project3"/"Sketch111"-style labels that
+    // Fusion's own concatenation left with no whitespace.
+    function cleanHealthMessage(raw) {
+        return raw
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/?b>/gi, '\n')
+            .replace(/([a-z0-9!.,])([A-Z][a-zA-Z]*\d+)/g, '$1\n$2\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
     function appendItems(parent, features, maxParents, isGroup=false) {
         let list = document.createElement('ul');
         if (isGroup) {
@@ -479,6 +538,13 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             if (feature.health) {
                 listItem.classList.add('health-' + feature.health);
             }
+            let healthMessage = feature['health-message'] ? cleanHealthMessage(feature['health-message']) : '';
+            if (healthMessage) {
+                listItem.setAttribute('data-health-message', healthMessage);
+            }
+            if (feature['sk-lost-projections'] !== undefined) {
+                listItem.setAttribute('data-lost-projections', feature['sk-lost-projections'] ? '1' : '0');
+            }
 
             if (feature['edit-name']) {
                 listItem.setAttribute('data-edit-name', feature['edit-name']);
@@ -497,7 +563,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 }
                 addParentBars(listItem, feature, maxParents);
             }
-            let healthPrefix = feature['health-message'] ? feature['health-message'] + '\n\n' : '';
+            let healthPrefix = healthMessage ? healthMessage + '\n\n' : '';
             listItem.title = `${healthPrefix}${titlePrefix}Right-click for options.`;
 
             let image = document.createElement('img');
@@ -775,7 +841,72 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         }
     }
 
+    // ---- Review Warning panel ----
+    // Fusion exposes no standalone "Review warning" command to run (issue
+    // #17), but the warning text is already computed server-side and sent
+    // with the row (health-message / data-health-message), so this shows it
+    // entirely client-side - no round trip needed.
+
+    var warningPanelEl = null;
+
+    function getWarningPanelEl() {
+        if (!warningPanelEl) {
+            warningPanelEl = document.createElement('div');
+            warningPanelEl.className = 'warning-panel hidden';
+            let header = document.createElement('div');
+            header.className = 'warning-panel-header';
+            let title = document.createElement('span');
+            title.className = 'warning-panel-title';
+            let close = document.createElement('span');
+            close.className = 'warning-panel-close';
+            close.textContent = '✕';
+            close.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                hideWarningPanel();
+            });
+            header.appendChild(title);
+            header.appendChild(close);
+            let message = document.createElement('div');
+            message.className = 'warning-panel-message';
+            warningPanelEl.appendChild(header);
+            warningPanelEl.appendChild(message);
+            document.body.appendChild(warningPanelEl);
+        }
+        return warningPanelEl;
+    }
+
+    function hideWarningPanel() {
+        if (warningPanelEl) {
+            warningPanelEl.classList.add('hidden');
+        }
+    }
+
+    function showWarningPanel(title, message, x, y, isError) {
+        let panel = getWarningPanelEl();
+        panel.querySelector('.warning-panel-title').textContent = title;
+        panel.querySelector('.warning-panel-message').textContent = message;
+        panel.classList.toggle('health-error', !!isError);
+        panel.classList.remove('hidden');
+        // Same placement/overflow-nudge logic as the context menu: anchor at
+        // the cursor, then pull back into view if it would overflow.
+        panel.style.left = x + 'px';
+        panel.style.top = y + 'px';
+        let rect = panel.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            panel.style.left = Math.max(0, window.innerWidth - rect.width - 4) + 'px';
+        }
+        if (rect.bottom > window.innerHeight) {
+            panel.style.top = Math.max(0, window.innerHeight - rect.height - 4) + 'px';
+        }
+    }
+
+    function dismissOverlays() {
+        hideContextMenu();
+        hideWarningPanel();
+    }
+
     function showContextMenu(item, x, y) {
+        hideWarningPanel();
         let menu = getContextMenuEl();
         menu.innerHTML = '';
 
@@ -824,8 +955,10 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     // Sketch-only options, mirroring Fusion's browser-tree and
                     // timeline right-click menus for a sketch. Each native command
                     // runs only when Fusion actually offers it (the add-in reports
-                    // back otherwise). "Manage Lost Projections" / "Review warning"
-                    // are gated on the sketch carrying a warning.
+                    // back otherwise). "Manage Lost Projections" is gated on
+                    // that specific warning (data-lost-projections, computed
+                    // server-side - see _sketch_has_lost_projections), not
+                    // just any warning; "Review warning" opens its own panel.
                     entries.push({ label: 'Show/Hide',
                                    icon: menuIcons['toggleVisibility'],
                                    run: () => sendFeatureAction('toggleVisibility', id) });
@@ -836,7 +969,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                                    run: () => runNativeCommand(id, 'Redefine Sketch Plane') });
                     entries.push({ label: 'Select Sketch Plane',
                                    run: () => sendFeatureAction('selectSketchPlane', id) });
-                    if (hasWarning) {
+                    if (item.getAttribute('data-lost-projections') === '1') {
                         entries.push({ label: 'Manage Lost Projections',
                                        icon: menuIcons['manageLostProjections'],
                                        run: () => runNativeCommand(id, 'Manage Lost Projections') });
@@ -879,7 +1012,12 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 if (hasWarning) {
                     entries.push({ label: 'Review warning',
                                    icon: menuIcons['reviewWarning'],
-                                   run: () => runNativeCommand(id, 'Review warning') });
+                                   run: () => showWarningPanel(
+                                       item.getAttribute('data-name'),
+                                       item.getAttribute('data-health-message')
+                                           || 'No warning details available.',
+                                       x, y,
+                                       item.classList.contains('health-error')) });
                 }
                 entries.push({ separator: true });
                 entries.push({ label: 'Find in Browser',
@@ -1205,19 +1343,19 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
         timelineEl.addEventListener('contextmenu', onFeatureContextMenu);
     })();
 
-    // Dismiss the context menu on any interaction outside it.
-    document.addEventListener('click', hideContextMenu);
+    // Dismiss the context menu / warning panel on any interaction outside them.
+    document.addEventListener('click', dismissOverlays);
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            hideContextMenu();
+            dismissOverlays();
         }
     });
-    window.addEventListener('blur', hideContextMenu);
-    window.addEventListener('scroll', hideContextMenu, true);
+    window.addEventListener('blur', dismissOverlays);
+    window.addEventListener('scroll', dismissOverlays, true);
     document.addEventListener('contextmenu', (e) => {
         // Right-clicking empty space (not a feature row) closes the menu.
         if (!e.target.closest('.feature')) {
-            hideContextMenu();
+            dismissOverlays();
         }
     });
 
