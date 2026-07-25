@@ -7,8 +7,6 @@ A Fusion 360 add-in that adds a vertical timeline. Works on Windows and macOS, t
 The palette adapts to light and dark themes, following your operating system /
 Fusion UI color theme.
 
-See [CHANGELOG.md](CHANGELOG.md) for release history.
-
 ## Installation
 
 Download the add-in from the [Releases](https://github.com/MatRanc/VerticalTimeline2/releases) page.
