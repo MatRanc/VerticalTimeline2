@@ -137,6 +137,14 @@ SKIP_REFRESH_COMMAND_IDS = NAV_COMMAND_IDS | {
 ROLL_COMMAND_ID = 'FusionRollCommand'
 _own_roll_deadline = 0.0
 
+# Issue #23 "Find in Timeline": which row to jump to, stashed by
+# marking_menu_displaying_handler at menu-build time and read back by
+# find_in_timeline_command_created_handler when the injected item is clicked.
+# CommandCreatedEventArgs carries no custom payload, so - same coordination
+# style as _own_roll_deadline above - a module global bridges the two calls.
+FIND_IN_TIMELINE_CMD_ID = 'thomasa88_findInTimeline'
+_find_in_timeline_target_id = None
+
 def find_commands(substring):
     return [c.id for c in ui.commandDefinitions if substring in c.id.lower()]
 
@@ -687,6 +695,19 @@ def run(context):
                     adsk.core.ActiveSelectionEventHandler,
                     active_selection_changed_handler)
 
+        # "Find in Vertical Timeline" on Fusion's own right-click menus (#23).
+        find_in_timeline_cmd_def = ui.commandDefinitions.itemById(FIND_IN_TIMELINE_CMD_ID)
+        if not find_in_timeline_cmd_def:
+            find_in_timeline_cmd_def = ui.commandDefinitions.addButtonDefinition(
+                FIND_IN_TIMELINE_CMD_ID, 'Find in Vertical Timeline',
+                'Select and scroll to this feature in the Vertical Timeline palette')
+        events_manager.add_handler(find_in_timeline_cmd_def.commandCreated,
+                    adsk.core.CommandCreatedEventHandler,
+                    find_in_timeline_command_created_handler)
+        events_manager.add_handler(ui.markingMenuDisplaying,
+                    adsk.core.MarkingMenuEventHandler,
+                    marking_menu_displaying_handler)
+
         print("Running")
 
         # Show palette when user starts the add-in manually
@@ -716,6 +737,10 @@ def stop(context):
         cmdDef = ui.commandDefinitions.itemById('thomasa88_showVerticalTimeline')
         if cmdDef:
             cmdDef.deleteMe()
+
+        find_in_timeline_cmd_def = ui.commandDefinitions.itemById(FIND_IN_TIMELINE_CMD_ID)
+        if find_in_timeline_cmd_def:
+            find_in_timeline_cmd_def.deleteMe()
 
 def show_palette():
     global html_ready
@@ -1437,13 +1462,52 @@ def find_node_id_for_entity(native, token):
 # the public API cannot map back to the feature that created it.
 TRACE_SELECTION = False
 
+def _node_id_for_native_entity(native):
+    '''Best-effort entity -> timeline row id lookup, shared by GUI-selection
+    highlighting (active_selection_changed_handler, issue #14) and the
+    native-menu "Find in Timeline" injection (marking_menu_displaying_handler,
+    issue #23): the token index built at refresh time, then via
+    TimelineObject.index (tokens are documented as non-stable strings, the
+    timeline position is not), and only then the capped per-node scan.
+    Returns (node_id, matched_by) - matched_by is 'none' if nothing matched.'''
+    node_id = None
+    matched_by = 'none'
+    token = None
+    try:
+        token = native.entityToken
+        node_id = timeline_cache_entity_index.get(token)
+        if node_id is not None:
+            matched_by = 'token'
+    except Exception:
+        pass
+    if node_id is None:
+        # Timeline entities (features, sketches, planes, occurrences) expose
+        # their TimelineObject; its index keys the position map at any design
+        # size (~3 ms per read — an internal position lookup, not a cheap
+        # property; fine for one selection). BRep geometry has no
+        # timelineObject and skips through. Inside a collapsed group .index
+        # RAISES (InternalValidationError, not -1 — verified 2026-07-15),
+        # landing in the except: a clean miss.
+        try:
+            node_id = timeline_cache_position_index.get(native.timelineObject.index)
+            if node_id is not None:
+                matched_by = 'position'
+        except Exception:
+            pass
+    if node_id is None and timeline_cache_map and len(timeline_cache_map) <= FALLBACK_SCAN_MAX_NODES:
+        # Last resort: compare the selected entity against each node's live
+        # entity, both read in this same moment. Capped: the per-node
+        # obj.entity scan freezes large assemblies (issue #9).
+        node_id = find_node_id_for_entity(native, token)
+        if node_id is not None:
+            matched_by = 'scan'
+    return node_id, matched_by
+
 def active_selection_changed_handler(args):
     '''Highlight the timeline row(s) matching the feature selected in Fusion's GUI.
 
-    Best-effort, O(selected): each selected entity is matched via the token
-    index built at refresh time, then via its TimelineObject.index (tokens are
-    documented as non-stable strings, the timeline position is not), and only
-    then via the capped per-node scan. Anything that fails is swallowed so the
+    Best-effort, O(selected): each selected entity is matched via
+    _node_id_for_native_entity. Anything that fails is swallowed so the
     user's selection flow is never disturbed.'''
     if not HIGHLIGHT_GUI_SELECTION:
         return
@@ -1460,37 +1524,7 @@ def active_selection_changed_handler(args):
             if entity is None:
                 continue
             native = native_of(entity)
-            node_id = None
-            token = None
-            matched_by = 'none'
-            try:
-                token = native.entityToken
-                node_id = timeline_cache_entity_index.get(token)
-                matched_by = 'token'
-            except Exception:
-                pass
-            if node_id is None:
-                # Timeline entities (features, sketches, planes, occurrences)
-                # expose their TimelineObject; its index keys the position map
-                # at any design size (~3 ms per read — an internal position
-                # lookup, not a cheap property; fine for one selection). BRep
-                # geometry has no timelineObject and skips through. Inside a
-                # collapsed group .index RAISES (InternalValidationError, not
-                # -1 — verified 2026-07-15), landing in the except: a clean miss.
-                try:
-                    node_id = timeline_cache_position_index.get(
-                        native.timelineObject.index)
-                    matched_by = 'position'
-                except Exception:
-                    pass
-            if node_id is None and len(timeline_cache_map) <= FALLBACK_SCAN_MAX_NODES:
-                # Last resort: compare the selected entity against each node's
-                # live entity, both read in this same moment. Capped: the
-                # per-node obj.entity scan freezes large assemblies (issue #9).
-                node_id = find_node_id_for_entity(native, token)
-                matched_by = 'scan'
-            if node_id is None:
-                matched_by = 'none'
+            node_id, matched_by = _node_id_for_native_entity(native)
             if TRACE_SELECTION:
                 try:
                     with open(os.path.expanduser('~/vt_selection_trace.log'), 'a') as f:
@@ -1504,5 +1538,42 @@ def active_selection_changed_handler(args):
         return
 
     palette.sendInfoToHTML('highlightFeatures', json.dumps({'ids': selected_ids}))
+
+def marking_menu_displaying_handler(args):
+    '''Inject "Find in Vertical Timeline" into Fusion's own right-click menu
+    (issue #23), fired via ui.markingMenuDisplaying just before Fusion shows
+    it - for the viewport and the browser tree alike, per the API docs. Only
+    added when exactly one right-clicked entity resolves to a known timeline
+    row; the id to jump to is stashed for find_in_timeline_command_created_
+    handler to pick up (CommandCreatedEventArgs carries no custom payload).
+    Best-effort and defensive: this runs on every right-click in Fusion, so
+    it must never raise - an uncaught exception here pops an error message
+    box on every single right-click (see thomasa88lib.error.ErrorCatcher).'''
+    global _find_in_timeline_target_id
+    try:
+        mm_args = adsk.core.MarkingMenuEventArgs.cast(args)
+        entities = mm_args.selectedEntities
+        if not entities or len(entities) != 1:
+            return
+        native = native_of(entities[0])
+        node_id, _ = _node_id_for_native_entity(native)
+        if node_id is None:
+            return
+        cmd_def = ui.commandDefinitions.itemById(FIND_IN_TIMELINE_CMD_ID)
+        if not cmd_def:
+            return
+        _find_in_timeline_target_id = node_id
+        mm_args.linearMarkingMenu.controls.addCommand(cmd_def)
+    except Exception:
+        pass
+
+def find_in_timeline_command_created_handler(args):
+    '''Runs when the injected "Find in Vertical Timeline" item is clicked.
+    No dialog needed - just forward the stashed row id to the palette.'''
+    if _find_in_timeline_target_id is None:
+        return
+    palette = ui.palettes.itemById('thomasa88_verticalTimelinePalette')
+    if palette:
+        palette.sendInfoToHTML('findInTimeline', json.dumps({'id': _find_in_timeline_target_id}))
 
 #########################################################################################

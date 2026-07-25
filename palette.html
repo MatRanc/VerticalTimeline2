@@ -429,6 +429,9 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 case 'highlightFeatures':
                     highlightFeatures(data['ids']);
                     break;
+                case 'findInTimeline':
+                    findInTimeline(data['id']);
+                    break;
                 case 'debugger':
                     debugger;
                     break;
@@ -1032,6 +1035,30 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     function highlightFeatures(ids) {
         selectedIds = new Set((ids || []).map(Number));
         applySelection();
+    }
+
+    // "Find in Vertical Timeline" from Fusion's own right-click menu (#23):
+    // select the row and scroll it into view, expanding any collapsed
+    // ancestor group first (same trick expand-all-btn uses - click each
+    // group's own toggle so its collapsed-state bookkeeping stays correct).
+    function findInTimeline(id) {
+        let row = document.querySelector(`.feature[data-id="${id}"]`);
+        if (!row) {
+            return;
+        }
+        let ancestor;
+        while ((ancestor = row.closest('.feature-group.collapsed'))) {
+            let toggle = ancestor.previousElementSibling
+                && ancestor.previousElementSibling.querySelector('.group-toggle');
+            if (!toggle) {
+                break;
+            }
+            toggle.click();
+        }
+        selectedIds = new Set([id]);
+        lastClickedId = id;
+        applySelection();
+        row.scrollIntoView({ block: 'center' });
     }
 
     // ---- Draggable rollback (history-marker) bar ----
