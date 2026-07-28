@@ -1,6 +1,28 @@
 # Changelog
 
 * v 0.7.10
+  * Features created by a script, an add-in or the Autodesk Assistant now
+    appear in the palette on their own, instead of waiting for the next manual
+    UI command ([#27](https://github.com/MatRanc/VerticalTimeline2/issues/27)).
+    Such changes run no command definition, and Fusion has no "timeline
+    changed" event ([#26](https://github.com/MatRanc/VerticalTimeline2/issues/26)),
+    so the palette now polls the two O(1) signals it already tracks -
+    `timeline.count` and `timeline.markerPosition` - and refreshes only when
+    one of them actually moved.
+  * The native timeline's playback buttons (*Move to End* &co) reliably move
+    the palette's rollback bar again
+    ([#28](https://github.com/MatRanc/VerticalTimeline2/issues/28)). The roll
+    command a palette-initiated roll fires used to be skipped by a 2-second
+    time window, which also swallowed a native roll made inside that window -
+    the source of the intermittency. The skip now compares the marker position
+    instead: a roll that lands where the palette already shows the marker is
+    ours, anything else refreshes.
+  * Rolling with the palette's own rollback bar now picks up warnings and
+    errors the recompute introduced - and clears the ones it resolved -
+    instead of showing stale health until the next full refresh
+    ([#29](https://github.com/MatRanc/VerticalTimeline2/issues/29)). The roll
+    fast path carries each row's health with it (a microsecond-level property
+    read per cached row; the expensive timeline walk is still skipped).
   * Investigated [#24](https://github.com/MatRanc/VerticalTimeline2/issues/24)
     (deleting a rolled-back feature): the #20 native-delete change above
     already fixed the crash for the common cases. The remaining gap - a

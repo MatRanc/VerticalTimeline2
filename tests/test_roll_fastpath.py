@@ -9,14 +9,19 @@ Run: python3 test_roll_fastpath.py
 """
 
 
+class FakeObj:
+    def __init__(self, health=None):
+        self.health = health
+
+
 class FakeNode:
     _next_id = 0
 
-    def __init__(self, name, children=None):
+    def __init__(self, name, children=None, health=None):
         self.name = name
         self.id = FakeNode._next_id
         FakeNode._next_id = self.id + 1
-        self.obj = object()
+        self.obj = FakeObj(health)
         self.children = children or []
 
 
@@ -46,6 +51,27 @@ def rolled_ids(tree, target):
     walk(tree)
     assert seen_target[0], 'target must be found in the tree'
     return {n for n in rolled}
+
+
+def health_map(tree):
+    # Mirror of the health payload marker_fastpath_command sends (#29): only
+    # the rows that currently have an error/warning, read back off the cached
+    # wrappers after the roll recomputed them.
+    out = {}
+    def walk(node):
+        for child in node.children:
+            if child.obj.health:
+                out[str(child.id)] = {'health': child.obj.health, 'message': ''}
+            walk(child)
+    walk(tree)
+    return out
+
+
+def apply_health(rows, payload):
+    # Mirror of applyMarker/setRowHealth on the JS side: every row not in the
+    # payload is cleared, so a warning the roll resolved disappears.
+    return {name: payload.get(str(rid), {}).get('health')
+            for name, rid in rows.items()}
 
 
 def names(tree, ids):
@@ -91,6 +117,23 @@ def demo():
     a = FakeNode('a')
     tree = FakeNode('root', [a, outer, z])
     assert names(tree, rolled_ids(tree, a)) == {'outer', 'inner', 'c', 'x', 'z'}
+
+    # #29: the fast path carries health, so a roll that recomputes a feature
+    # into a warning styles the row without a full rebuild - and a later roll
+    # that resolves it clears the row again (absent from the payload).
+    a, b, c = FakeNode('a'), FakeNode('b'), FakeNode('c')
+    tree = FakeNode('root', [a, b, c])
+    rows = {n.name: n.id for n in (a, b, c)}
+    assert apply_health(rows, health_map(tree)) == {'a': None, 'b': None, 'c': None}
+
+    b.obj.health = 'warning'            # rolling forward broke b
+    c.obj.health = 'error'
+    assert apply_health(rows, health_map(tree)) == {
+        'a': None, 'b': 'warning', 'c': 'error'}
+
+    b.obj.health = None                 # rolling back resolved it
+    assert apply_health(rows, health_map(tree)) == {
+        'a': None, 'b': None, 'c': 'error'}
 
     print('roll fastpath OK')
 

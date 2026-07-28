@@ -103,11 +103,13 @@ at the marker, so an insert that isn't at the very end leaves
 2. **Don't full-rebuild on marker-only (roll) changes.** ✅ Shipped for
    palette-initiated rolls (context menu + marker-bar drag).
    `marker_fastpath_command()` / `rollToFeature` handler
-   (`VerticalTimeline.py`); `applyMarker()` (`palette.html`) — mechanism,
-   the self-fired-`FusionRollCommand` consumption, and the ceiling (recompute
-   side effects only show on the next full refresh) are documented at the
-   call sites. Not covered: rolls made on Fusion's *native* timeline still
-   full-rebuild — detecting "marker-only" there means solving the same
+   (`VerticalTimeline.py`); `applyMarker()` (`palette.html`) — mechanism and
+   the self-fired-`FusionRollCommand` skip (a marker comparison, not a time
+   window — see #28) are documented at the call sites. The old ceiling
+   (recompute side effects invisible until the next full refresh) is gone: the
+   payload now carries each row's health — 29 µs/node, **12.6 ms for a 436-node
+   cache** (measured 2026-07-27), versus 250 ms for a warm full rebuild (#29). Not covered: rolls made on Fusion's *native* timeline
+   still full-rebuild — detecting "marker-only" there means solving the same
    structural-ambiguity problem as #1.
 
 ## Tier 2 — server-side, low risk
@@ -131,6 +133,15 @@ at the marker, so an insert that isn't at the very end leaves
 6. **Coalesce/debounce `invalidate()`.** ✅ Shipped. `schedule_refresh()`
    (`VerticalTimeline.py`) — fixed the issue #9 pan/orbit freeze; mechanism
    documented at the call site.
+
+7. **Idle poll for change signals no event reports** (#27). ✅ Shipped.
+   `poll_event_handler()` / `_timeline_matches_palette()`
+   (`VerticalTimeline.py`). A tick compares `timeline.count` /
+   `timeline.markerPosition` against what the palette was last given and only
+   calls `invalidate()` when one of them moved. Measured **~0.6 ms per tick**
+   (2026-07-27, 361-node design) — the property reads are free, the
+   `get_timeline()` product lookup is the cost — so the 0.5 s interval spends
+   ~0.1% of one core on an idle design. Mirror test `test_poll.py`.
 
 ## Remaining slow paths
 

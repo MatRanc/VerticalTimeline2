@@ -463,7 +463,7 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                     })();
                     break;
                 case 'setMarker':
-                    applyMarker(new Set(data['rolled']));
+                    applyMarker(new Set(data['rolled']), data['health'] || {});
                     break;
                 case 'showMessage':
                     showStatus(data['message']);
@@ -503,6 +503,24 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             .trim();
     }
 
+    // The row's error/warning styling, message attribute and tooltip. Used both
+    // when building rows (appendItems) and when a roll changes health without a
+    // rebuild (applyMarker, #29), so the two routes can't drift apart. Pass a
+    // falsy health to clear. dataset.titleBase holds the non-health part of the
+    // tooltip, since only appendItems knows it.
+    function setRowHealth(row, health, rawMessage) {
+        row.classList.toggle('health-error', health === 'error');
+        row.classList.toggle('health-warning', health === 'warning');
+        let message = (health && rawMessage) ? cleanHealthMessage(rawMessage) : '';
+        if (message) {
+            row.setAttribute('data-health-message', message);
+        } else {
+            row.removeAttribute('data-health-message');
+        }
+        row.title = (message ? message + '\n\n' : '') + (row.dataset.titleBase || '');
+        return message;
+    }
+
     function appendItems(parent, features, maxParents, isGroup=false) {
         let list = document.createElement('ul');
         if (isGroup) {
@@ -535,13 +553,6 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
             if (feature.rolledBack) {
                 listItem.setAttribute('data-rolled-back', '1');
             }
-            if (feature.health) {
-                listItem.classList.add('health-' + feature.health);
-            }
-            let healthMessage = feature['health-message'] ? cleanHealthMessage(feature['health-message']) : '';
-            if (healthMessage) {
-                listItem.setAttribute('data-health-message', healthMessage);
-            }
             if (feature['sk-lost-projections'] !== undefined) {
                 listItem.setAttribute('data-lost-projections', feature['sk-lost-projections'] ? '1' : '0');
             }
@@ -563,8 +574,8 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
                 }
                 addParentBars(listItem, feature, maxParents);
             }
-            let healthPrefix = healthMessage ? healthMessage + '\n\n' : '';
-            listItem.title = `${healthPrefix}${titlePrefix}Right-click for options.`;
+            listItem.dataset.titleBase = `${titlePrefix}Right-click for options.`;
+            setRowHealth(listItem, feature.health, feature['health-message']);
 
             let image = document.createElement('img');
             image.src = (isDark() && feature['imageDark']) ? feature['imageDark'] : feature['image'];
@@ -1149,12 +1160,17 @@ SPDX-License-Identifier: GPL-3.0-or-later OR MIT
     // rebuild (PERFORMANCE.md Tier 1 #2). Mirrors appendItems' class rules:
     // 'suppressed' when suppressed or rolled back, 'first-rolled-back' on the
     // first rolled-back row of each list.
-    function applyMarker(rolledIds) {
+    function applyMarker(rolledIds, healthById) {
         for (let list of document.querySelectorAll('#timeline ul')) {
             let first = true;
             for (let row of list.children) {
                 if (!row.classList.contains('feature')) continue;
-                let rolled = rolledIds.has(parseInt(row.getAttribute('data-id')));
+                let id = row.getAttribute('data-id');
+                // Health after the recompute the roll triggered (#29): rows
+                // absent from the map are healthy and get their styling cleared.
+                let health = healthById[id];
+                setRowHealth(row, health && health.health, health && health.message);
+                let rolled = rolledIds.has(parseInt(id));
                 if (rolled) {
                     row.setAttribute('data-rolled-back', '1');
                 } else {

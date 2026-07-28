@@ -21,7 +21,6 @@ import json
 import os
 import sys
 import threading
-import time
 
 NAME = 'Vertical Timeline'
 FILE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -87,6 +86,74 @@ def refresh_event_handler(args):
     # that lands after the palette closed is harmless.
     invalidate()
 
+# Idle poll for timeline changes nothing tells us about (#27, #28): a feature
+# created through the API (a script, an add-in, the Autodesk Assistant) runs no
+# command definition, and the native timeline's playback buttons are widget UI,
+# so commandTerminated - the only structural refresh trigger - stays silent and
+# the palette shows a stale timeline until the next UI command. Fusion exposes
+# no "timeline changed" event (#26), so poll the two O(1) signals invalidate()
+# already records: timeline.count and timeline.markerPosition. Same worker
+# thread -> fireCustomEvent -> main thread marshalling as schedule_refresh.
+# A tick costs ~0.6 ms on the main thread (measured live, 2026-07-27, 361-node
+# design) - the two property reads are free, the get_timeline() product lookup
+# is the cost - so 0.5 s spends ~0.1% of one core to make an API-created feature
+# appear in about the time it takes to notice it.
+# ponytail: count+marker only. An API-driven rename/suppress/reorder that
+# changes neither is still invisible until the next UI command; add a third
+# cheap signal (or a real event, if Fusion ever ships one) if that bites.
+POLL_EVENT_ID = 'thomasa88_verticalTimeline_poll'
+POLL_SECONDS = 0.5
+_poll_timer = None
+_poll_running = False
+
+def _start_poll():
+    global _poll_running
+    _poll_running = True
+    _arm_poll()
+
+def _stop_poll():
+    global _poll_running
+    _poll_running = False
+    if _poll_timer:
+        _poll_timer.cancel()
+
+def _arm_poll():
+    global _poll_timer
+    _poll_timer = threading.Timer(POLL_SECONDS, _fire_poll)
+    _poll_timer.daemon = True
+    _poll_timer.start()
+
+def _fire_poll():
+    # Worker thread - only marshal to the main thread, then re-arm (Timer is
+    # one-shot). The _poll_running check keeps a tick that was already in flight
+    # when stop() ran from resurrecting the timer (add-in reloads are frequent).
+    app.fireCustomEvent(POLL_EVENT_ID)
+    if _poll_running:
+        _arm_poll()
+
+def _timeline_matches_palette():
+    '''True when the live timeline's count and marker still match what the
+    palette was last given - two O(1) property reads, ~0.6 ms all in (measured;
+    the get_timeline() product lookup, not the reads). A timeline we cannot read
+    (product not ready / not parametric) counts as matching: those states are
+    driven by documentActivated, and answering "changed" would make the poll
+    refresh on every tick.'''
+    timeline_status, timeline = thomasa88lib.timeline.get_timeline()
+    if timeline_status != TIMELINE_STATUS_OK:
+        return True
+    return (timeline.count == timeline_item_count and
+            timeline.markerPosition == timeline_marker_position)
+
+def poll_event_handler(args):
+    # Main thread. A change goes through the normal invalidate(), which reuses
+    # the flat cache when the structure is unchanged and updates both globals,
+    # so each change refreshes exactly once.
+    palette = ui.palettes.itemById('thomasa88_verticalTimelinePalette')
+    if not palette or not palette.isVisible or not html_ready:
+        return
+    if not _timeline_matches_palette():
+        invalidate()
+
 # Highlight the timeline row matching the feature selected in Fusion's GUI.
 # Best-effort: matching is based on entity identity. Set to False to disable.
 HIGHLIGHT_GUI_SELECTION = True
@@ -128,20 +195,21 @@ SKIP_REFRESH_COMMAND_IDS = NAV_COMMAND_IDS | {
 # A palette-initiated roll already updates the palette in place
 # (marker_fastpath_command), but the rollTo() itself terminates a
 # FusionRollCommand (confirmed in ~/vt_cmd_trace.log, 2026-07-15), which would
-# trigger the very full rebuild the fast path just avoided. Consume exactly one
-# FusionRollCommand shortly after our own roll; rolls made on Fusion's native
-# timeline arrive outside the window and still refresh normally.
-# ponytail: one-shot 2s window, not per-command-instance tracking — a native
-# roll landing inside an unconsumed window would be missed once; track command
-# instances if that ever bites.
+# trigger the very full rebuild the fast path just avoided. Skipping it by time
+# window ("eat one FusionRollCommand within 2s of our own roll") is what made
+# #28 intermittent: a native Move to End pressed inside that window - or any
+# window our own roll left unconsumed - got eaten too, so the palette kept
+# showing the old marker. Compare the marker instead: the fast path records
+# where it put the marker, so a roll command that lands on the position we are
+# already displaying is ours (or a no-op) and needs no rebuild; any other
+# position is a real move and refreshes. No timing involved.
 ROLL_COMMAND_ID = 'FusionRollCommand'
-_own_roll_deadline = 0.0
 
 # Issue #23 "Find in Timeline": which row to jump to, stashed by
 # marking_menu_displaying_handler at menu-build time and read back by
 # find_in_timeline_command_created_handler when the injected item is clicked.
-# CommandCreatedEventArgs carries no custom payload, so - same coordination
-# style as _own_roll_deadline above - a module global bridges the two calls.
+# CommandCreatedEventArgs carries no custom payload, so a module global bridges
+# the two calls.
 FIND_IN_TIMELINE_CMD_ID = 'thomasa88_findInTimeline'
 _find_in_timeline_target_id = None
 
@@ -224,8 +292,12 @@ def marker_fastpath_command(target_node):
     of its leaves are. Returns None (caller falls back to a full invalidate)
     when the target cannot be located in the cache.
 
-    Ceiling: any side effect of the recompute (a re-included feature turning
-    errored, say) is not reflected until the next full refresh.'''
+    Health rides along (#29): rolling past a feature can recompute it into a
+    warning/error, and rolling back can clear one, so the payload carries the
+    current health of every row that has one - the JS clears the rest. Costs one
+    property read per cached wrapper: 29 us/node, 12.6 ms for a 436-node cache
+    (measured 2026-07-27), against a full rebuild's 250 ms warm / 6.4 s cold -
+    the expensive Timeline.item(i) walk stays skipped.'''
     if timeline_cache_tree is None or target_node is None:
         return None
     # Rolling onto a group parks the marker after its last feature.
@@ -257,7 +329,18 @@ def marker_fastpath_command(target_node):
     walk(timeline_cache_tree)
     if not seen_target[0]:
         return None
-    return {'action': 'setMarker', 'data': {'rolled': rolled}}
+
+    # Health of every row that has one, post-recompute (#29). Sent as a full
+    # picture of what is unhealthy: rows missing from it are cleared JS-side, so
+    # a warning that the roll resolved disappears too.
+    health = {}
+    for node in (timeline_cache_map or {}).values():
+        if node.obj is None:
+            continue
+        state = read_health(node.obj)
+        if state:
+            health[str(node.id)] = {'health': state[0], 'message': state[1]}
+    return {'action': 'setMarker', 'data': {'rolled': rolled, 'health': health}}
 
 STATUS_MESSAGE_MAX_LEN = 300
 
@@ -413,6 +496,24 @@ def get_cached_component_parent_map(timeline):
         _parent_map_cache_key = key
     return _parent_map_cache
 
+def read_health(obj):
+    '''('error'|'warning', message) for a timeline object, or None when it is
+    healthy (or has no health, e.g. groups/snapshots -> Unknown).
+
+    healthState lives on the timeline object itself (no entity round-trip) and
+    is a microsecond read on an already-held wrapper, so both the full refresh
+    and the roll fast path can afford it per row. Best-effort: never let it
+    break a refresh while a document is tearing down.'''
+    try:
+        health = obj.healthState
+        if health == adsk.fusion.FeatureHealthStates.ErrorFeatureHealthState:
+            return 'error', obj.errorOrWarningMessage or ''
+        if health == adsk.fusion.FeatureHealthStates.WarningFeatureHealthState:
+            return 'warning', obj.errorOrWarningMessage or ''
+    except Exception:
+        pass
+    return None
+
 def get_features_from_node(timeline_tree_node, component_parent_map, design):
     features = []
     max_parents = 0
@@ -427,19 +528,10 @@ def get_features_from_node(timeline_tree_node, component_parent_map, design):
             }
 
         # Health: surface error/warning state so the palette can highlight the
-        # row (red/yellow). healthState lives on the timeline object itself (no
-        # entity round-trip) and is Unknown for groups/snapshots. Best-effort:
-        # never let it break the refresh while a document is tearing down.
-        try:
-            health = obj.healthState
-            if health == adsk.fusion.FeatureHealthStates.ErrorFeatureHealthState:
-                feature['health'] = 'error'
-                feature['health-message'] = obj.errorOrWarningMessage or ''
-            elif health == adsk.fusion.FeatureHealthStates.WarningFeatureHealthState:
-                feature['health'] = 'warning'
-                feature['health-message'] = obj.errorOrWarningMessage or ''
-        except Exception:
-            pass
+        # row (red/yellow). See read_health().
+        health = read_health(obj)
+        if health:
+            feature['health'], feature['health-message'] = health
 
         # Might there be empty groups?
         if child_node.children:
@@ -706,6 +798,11 @@ def run(context):
         refresh_event = events_manager.register_event(REFRESH_EVENT_ID)
         events_manager.add_handler(refresh_event, callback=refresh_event_handler)
 
+        # Idle poll for API/native-widget timeline changes (#27, #28).
+        poll_event = events_manager.register_event(POLL_EVENT_ID)
+        events_manager.add_handler(poll_event, callback=poll_event_handler)
+        _start_poll()
+
         # Edit command tracing
         # def f(args):
         #     print(args.commandId)
@@ -758,6 +855,8 @@ def stop(context):
 
         if _refresh_timer:
             _refresh_timer.cancel()
+
+        _stop_poll()
 
         events_manager.clean_up()
 
@@ -1165,15 +1264,21 @@ def palette_incoming_from_html_handler(args):
             # marker only ever sit before/after the group).
             obj.parentGroup.isCollapsed = False
         rolled_ok = obj.rollTo(False)
-        if rolled_ok:
-            # Arm the one-shot skip for the FusionRollCommand this roll fires.
-            global _own_roll_deadline
-            _own_roll_deadline = time.monotonic() + 2.0
         html_commands.append(rolled_ok)
         # A successful roll takes the in-place fast path (see
         # marker_fastpath_command); anything unexpected falls back to the full
         # rebuild, which is the correctness backstop.
         fastpath = marker_fastpath_command(node) if rolled_ok else None
+        if fastpath:
+            # The fast path skips invalidate(), so record where we put the
+            # marker ourselves. Both the FusionRollCommand this roll fires and
+            # the idle poll compare against these, and would otherwise do the
+            # full rebuild the fast path just avoided.
+            _, rolled_timeline = thomasa88lib.timeline.get_timeline()
+            if rolled_timeline:
+                global timeline_item_count, timeline_marker_position
+                timeline_item_count = rolled_timeline.count
+                timeline_marker_position = rolled_timeline.markerPosition
         html_commands.append(fastpath or invalidate(send=False))
     elif action == 'toggleVisibility':
         # Show/Hide, mirroring the entity's browser-tree visibility toggle.
@@ -1455,12 +1560,8 @@ def _is_navigation_command(eventArgs):
 def command_terminated_handler(args):
     eventArgs = adsk.core.ApplicationCommandEventArgs.cast(args)
 
-    # As long as we don't update on command create, we only need to listen for command completion
-    # Except Undo, which has a "Cancel" termination reason.
-    if (eventArgs.terminationReason != adsk.core.CommandTerminationReason.CompletedTerminationReason and
-        eventArgs.commandId != 'UndoCommand'):
-        return
-
+    # Traced before the reason filter, so the log shows every terminated
+    # command - including the ones this handler goes on to ignore.
     if TRACE_COMMANDS:
         try:
             with open(os.path.expanduser('~/vt_cmd_trace.log'), 'a') as f:
@@ -1468,6 +1569,12 @@ def command_terminated_handler(args):
                 f.write(f'{eventArgs.commandId}\t{eventArgs.terminationReason}\t{folder}\n')
         except Exception:
             pass
+
+    # As long as we don't update on command create, we only need to listen for command completion
+    # Except Undo, which has a "Cancel" termination reason.
+    if (eventArgs.terminationReason != adsk.core.CommandTerminationReason.CompletedTerminationReason and
+        eventArgs.commandId != 'UndoCommand'):
+        return
 
     # Order-changing commands invalidate the flat-timeline cache: they keep
     # timeline.count and every wrapper valid, so the reuse guards in
@@ -1486,11 +1593,11 @@ def command_terminated_handler(args):
     if eventArgs.commandId in SKIP_REFRESH_COMMAND_IDS or _is_navigation_command(eventArgs):
         return
 
-    # Our own palette roll: the palette is already up to date (fast path), so
-    # eat this one command instead of redoing the full rebuild.
-    global _own_roll_deadline
-    if eventArgs.commandId == ROLL_COMMAND_ID and time.monotonic() < _own_roll_deadline:
-        _own_roll_deadline = 0.0
+    # A roll that landed where the palette already shows the marker is our own
+    # (the fast path already updated the rows) or a no-op - nothing to rebuild.
+    # Any other position is a real move, including the native playback bar's
+    # Move to End (#28).
+    if eventArgs.commandId == ROLL_COMMAND_ID and _timeline_matches_palette():
         return
 
     schedule_refresh()
